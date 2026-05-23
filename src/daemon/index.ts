@@ -7,6 +7,20 @@ export interface Daemon {
   shutdown(): Promise<void>;
 }
 
+export function isDaemonRunning(): { running: boolean; pid?: number } {
+  if (!existsSync(paths.pid)) return { running: false };
+  const pid = parseInt(readFileSync(paths.pid, "utf8").trim(), 10);
+  if (!Number.isFinite(pid)) return { running: false };
+  try {
+    process.kill(pid, 0);
+    return { running: true, pid };
+  } catch (e: any) {
+    if (e?.code === "ESRCH") return { running: false };
+    if (e?.code === "EPERM") return { running: true, pid }; // owned by another user — still "running" from our POV
+    return { running: false };
+  }
+}
+
 export async function startDaemon(): Promise<Daemon> {
   mkdirSync(paths.root, { recursive: true });
   ensureNotRunning();
@@ -25,21 +39,28 @@ export async function startDaemon(): Promise<Daemon> {
     log.info("daemon: shut down");
   };
 
-  process.on("SIGTERM", () => { shutdown().then(() => process.exit(0)); });
-  process.on("SIGINT",  () => { shutdown().then(() => process.exit(0)); });
+  process.once("SIGTERM", () => { void shutdown().then(() => process.exit(0)).catch((e) => { log.error("shutdown error on SIGTERM", { error: String(e) }); process.exit(1); }); });
+  process.once("SIGINT",  () => { void shutdown().then(() => process.exit(0)).catch((e) => { log.error("shutdown error on SIGINT",  { error: String(e) }); process.exit(1); }); });
 
   return { shutdown };
 }
 
 function ensureNotRunning(): void {
   if (!existsSync(paths.pid)) return;
-  const pid = parseInt(readFileSync(paths.pid, "utf8").trim(), 10);
-  if (!Number.isFinite(pid)) { unlinkSync(paths.pid); return; }
-  try {
-    process.kill(pid, 0);
-    throw new Error(`daemon already running (pid ${pid})`);
-  } catch (e: any) {
-    if (e?.code === "ESRCH") { unlinkSync(paths.pid); return; }
-    throw e;
+  const status = isDaemonRunning();
+  if (status.running) {
+    if (status.pid != null) {
+      // Check for EPERM (owned by another user) to emit a more helpful log
+      const pid = parseInt(readFileSync(paths.pid, "utf8").trim(), 10);
+      try { process.kill(pid, 0); }
+      catch (e: any) {
+        if (e?.code === "EPERM") log.warn("ensureNotRunning: pid file exists but process is owned by another user", { pid });
+        throw e;
+      }
+      throw new Error(`daemon already running (pid ${status.pid})`);
+    }
+    throw new Error("daemon already running");
   }
+  // Stale PID — clean it up
+  try { unlinkSync(paths.pid); } catch {}
 }
