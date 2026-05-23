@@ -70,20 +70,23 @@ export function latestUsageSnapshots(db: Database, agentKind: string): UsageSnap
   const rows = db.query(`
     SELECT u.* FROM usage_snapshots u
     INNER JOIN (
-      SELECT scope, COALESCE(scope_key,'') AS sk, MAX(ts) AS maxts
+      SELECT scope, COALESCE(scope_key,'') AS sk, MAX(id) AS maxid
       FROM usage_snapshots WHERE agent_kind=? GROUP BY scope, COALESCE(scope_key,'')
-    ) latest ON latest.scope=u.scope AND latest.maxts=u.ts AND COALESCE(latest.sk,'')=COALESCE(u.scope_key,'')
+    ) latest ON latest.maxid=u.id
     WHERE u.agent_kind=?
   `).all(agentKind, agentKind) as any[];
   return rows.map(r => ({ ...r, limit: r.limit_ }));
 }
 
 function rowToSession(r: any): Session {
+  let launch_argv: string[];
+  try { launch_argv = JSON.parse(r.launch_argv); }
+  catch (e) { throw new Error(`queries: malformed launch_argv for session ${r.id}: ${(e as Error).message}`); }
   return {
     id: r.id, agent_kind: r.agent_kind, agent_session_id: r.agent_session_id,
     workspace_id: r.workspace_id, wave_tab_id: r.wave_tab_id, wave_block_id: r.wave_block_id,
     cwd: r.cwd, repo_root: r.repo_root, branch: r.branch, worktree_path: r.worktree_path,
-    launch_argv: JSON.parse(r.launch_argv), display_name: r.display_name, status: r.status,
+    launch_argv, display_name: r.display_name, status: r.status,
     auto_resume: !!r.auto_resume, pinned: !!r.pinned,
     created_at: r.created_at, last_active_at: r.last_active_at, transcript_path: r.transcript_path,
   };

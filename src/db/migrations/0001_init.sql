@@ -55,6 +55,3 @@ CREATE TABLE IF NOT EXISTS session_token_rollup (
   updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL
-);
