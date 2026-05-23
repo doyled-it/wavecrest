@@ -1,5 +1,4 @@
 // src/adapters/claude/usage.ts
-import pty from "node-pty";
 import type { UsageSnapshot } from "../../types.ts";
 import { log } from "../../lib/logger.ts";
 
@@ -34,6 +33,14 @@ export function _resetMetaForTests(): void {
 }
 
 async function spawnMeta(): Promise<MetaProcess> {
+  let pty: typeof import("node-pty").default;
+  try {
+    pty = (await import("node-pty")).default;
+  } catch {
+    log.warn("node-pty not available (compiled binary mode), usage polling disabled");
+    return { poll: async () => [], kill: () => {} };
+  }
+
   let p;
   try {
     p = pty.spawn("claude", [], {
