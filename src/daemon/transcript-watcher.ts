@@ -8,11 +8,10 @@ import { broadcast } from "./sse.ts";
 interface Tailer {
   offset: number;
   sessionId: string | null;
-  transcriptPath: string;
 }
 
 export interface Watcher {
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
@@ -20,13 +19,15 @@ export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
   const tailers = new Map<string, Tailer>();
   // Per-file serialization locks to prevent double-counting from concurrent chokidar fires.
   const locks = new Map<string, Promise<void>>();
+  let stopped = false;
 
   const handleFile = async (path: string): Promise<void> => {
+    if (stopped) return;
     if (!path.endsWith(".jsonl")) return;
 
     let t = tailers.get(path);
     if (!t) {
-      t = { offset: 0, sessionId: null, transcriptPath: path };
+      t = { offset: 0, sessionId: null };
       tailers.set(path, t);
     }
 
@@ -43,6 +44,8 @@ export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
       const lines = buf.toString("utf8").split("\n").filter(Boolean);
 
       for (const line of lines) {
+        if (stopped) return;
+
         let entry: Record<string, unknown>;
         try {
           entry = JSON.parse(line) as Record<string, unknown>;
@@ -50,12 +53,14 @@ export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
           continue; // silently skip malformed JSON
         }
 
-        // Try to resolve session_id from multiple possible locations in the entry
+        // Try to resolve session_id from multiple possible locations in the entry.
+        // NOTE: If the first line in a batch doesn't carry session_id this lookup is
+        // deferred to the next line that does — a known limitation, not restructured here.
         const agentSid: string | undefined =
           (typeof entry.session_id === "string" ? entry.session_id : undefined) ??
-          (typeof (entry as any).sessionId === "string" ? (entry as any).sessionId : undefined) ??
-          (typeof (entry.message as any)?.session_id === "string"
-            ? (entry.message as any).session_id
+          (typeof entry.sessionId === "string" ? entry.sessionId : undefined) ??
+          ((entry.message && typeof entry.message === "object")
+            ? (entry.message as Record<string, unknown>).session_id as string | undefined
             : undefined);
 
         if (agentSid && !t.sessionId) {
@@ -66,7 +71,7 @@ export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
         const message = entry.message as Record<string, unknown> | undefined;
         const usage = message?.usage as Record<string, unknown> | undefined;
 
-        if (usage && t.sessionId) {
+        if (usage && t.sessionId && !stopped) {
           upsertRollup(db, {
             session_id: t.sessionId,
             input_tokens: (usage.input_tokens as number) ?? 0,
@@ -105,10 +110,13 @@ export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
     .on("error", (e) => log.warn("transcript-watcher: watcher error", { error: String(e) }));
 
   return {
-    stop() {
-      void watcher.close();
-      tailers.clear();
+    async stop(): Promise<void> {
+      stopped = true;
+      await watcher.close();
+      // Drain all in-flight chains so no handleFile call writes to db after stop() resolves.
+      await Promise.allSettled(Array.from(locks.values()));
       locks.clear();
+      tailers.clear();
     },
   };
 }

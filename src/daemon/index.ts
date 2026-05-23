@@ -48,7 +48,7 @@ export async function startDaemon(): Promise<Daemon> {
   log.info("daemon: ready", { port: http.port, sock: paths.sock });
 
   const shutdown = async () => {
-    watcher.stop();
+    await watcher.stop();
     sock.close();
     http.stop();
     db.close();

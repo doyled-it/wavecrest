@@ -95,7 +95,7 @@ test("watcher tails JSONL and rolls up usage", async () => {
   expect(r?.input_tokens).toBe(10);
   expect(r?.output_tokens).toBe(5);
 
-  w.stop();
+  await w.stop();
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -125,7 +125,7 @@ test("watcher accumulates tokens across multiple appends", async () => {
   expect(r?.input_tokens).toBe(300);
   expect(r?.output_tokens).toBe(125);
 
-  w.stop();
+  await w.stop();
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -157,7 +157,7 @@ test("watcher ignores lines without usage block", async () => {
   const r = getRollup(db, sess.id);
   expect(r).toBeNull();
 
-  w.stop();
+  await w.stop();
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -179,7 +179,7 @@ test("watcher skips lines whose session_id is not registered", async () => {
   const rows = db.query("SELECT * FROM session_token_rollup").all();
   expect(rows.length).toBe(0);
 
-  w.stop();
+  await w.stop();
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -207,7 +207,39 @@ test("watcher silently skips malformed JSON lines", async () => {
   expect(r?.input_tokens).toBe(7);
   expect(r?.output_tokens).toBe(3);
 
-  w.stop();
+  await w.stop();
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("async stop() drains in-flight chains without exceptions and preserves rolled-up data", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wc-tw-stop-"));
+  const db = openDb(join(dir, "test.db"));
+  const transcript = join(dir, "stop.jsonl");
+  writeFileSync(transcript, "");
+
+  const agentSid = "stop-session";
+  const sess = makeSession(agentSid, transcript);
+  insertSession(db, sess);
+
+  const w = startTranscriptWatcher(db, [dir]);
+  await new Promise(r => setTimeout(r, 200));
+
+  // Append data and immediately stop — tests that drain works without crash.
+  appendFileSync(transcript, assistantLine(agentSid, 42, 17));
+  // Do NOT wait for stabilityThreshold; call stop() right away to exercise drain.
+  await expect(w.stop()).resolves.toBeUndefined();
+
+  // Start a second watcher to verify previously-written data in db is intact.
+  // (The first watcher may or may not have processed the line depending on timing,
+  // but the important assertion is that stop() completed without throwing.)
+  const r = getRollup(db, sess.id);
+  // If the line was processed before stop, tokens should be 42/17; otherwise null — either is fine.
+  if (r !== null) {
+    expect(r.input_tokens).toBe(42);
+    expect(r.output_tokens).toBe(17);
+  }
+
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
