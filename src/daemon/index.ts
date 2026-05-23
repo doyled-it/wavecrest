@@ -6,7 +6,7 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer } from "./http.ts";
-import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent } from "../db/queries.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { ulid } from "../lib/ulid.ts";
@@ -116,6 +116,29 @@ function makeRpcHandler(db: Database) {
     }
 
     if (method === "listSessions") return listActiveSessions(db);
+
+    if (method === "registerPlannedSession") {
+      const p = params as Record<string, unknown>;
+      const { kind, cwd, branch, worktree_path, launch_argv, display_name } = p;
+      if (typeof kind !== "string") throw new Error("registerPlannedSession: kind must be a string");
+      if (typeof cwd !== "string") throw new Error("registerPlannedSession: cwd must be a string");
+      if (!Array.isArray(launch_argv)) throw new Error("registerPlannedSession: launch_argv must be an array");
+      const id = ulid();
+      insertSession(db, {
+        id, agent_kind: kind as AgentKind, agent_session_id: null,
+        workspace_id: null, wave_tab_id: null, wave_block_id: null,
+        cwd, repo_root: null, branch: typeof branch === "string" ? branch : null,
+        worktree_path: typeof worktree_path === "string" ? worktree_path : null,
+        launch_argv: launch_argv as string[],
+        display_name: typeof display_name === "string" ? display_name : null,
+        status: "idle", auto_resume: true, pinned: false,
+        created_at: Date.now(), last_active_at: Date.now(),
+        transcript_path: null,
+      });
+      return { id };
+    }
+
+    if (method === "listResumable") return listResumableSessions(db);
 
     throw new Error(`unknown method: ${method}`);
   };

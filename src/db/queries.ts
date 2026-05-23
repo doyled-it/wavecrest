@@ -78,6 +78,13 @@ export function latestUsageSnapshots(db: Database, agentKind: string): UsageSnap
   return rows.map(r => ({ ...r, limit: r.limit_ }));
 }
 
+export function listResumableSessions(db: Database): Session[] {
+  const rows = db.query(
+    "SELECT * FROM sessions WHERE auto_resume=1 AND status NOT IN ('finished','stopped') ORDER BY last_active_at DESC"
+  ).all() as any[];
+  return rows.map(rowToSession);
+}
+
 function rowToSession(r: any): Session {
   let launch_argv: string[];
   try { launch_argv = JSON.parse(r.launch_argv); }
