@@ -10,6 +10,7 @@ import { startHttpServer, serveUi } from "./http.ts";
 import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
+import { startUsagePoller } from "./usage-poller.ts";
 import { ulid } from "../lib/ulid.ts";
 import { getAdapter } from "../adapters/registry.ts";
 import type { AgentKind } from "../types.ts";
@@ -48,10 +49,12 @@ export async function startDaemon(): Promise<Daemon> {
 
   const claudeRoot = join(homedir(), ".claude", "projects");
   const watcher = startTranscriptWatcher(db, [claudeRoot]);
+  const poller = startUsagePoller(db);
 
   log.info("daemon: ready", { port: http.port, sock: paths.sock });
 
   const shutdown = async () => {
+    poller.stop();
     await watcher.stop();
     sock.close();
     http.stop();

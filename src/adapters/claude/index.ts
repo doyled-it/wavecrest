@@ -3,6 +3,7 @@ import type { AgentAdapter } from "../types.ts";
 import { parseClaudeTranscript } from "./transcript.ts";
 import { hookEventToSessionUpdate, claudeInstallInstructions } from "./hooks.ts";
 import { claudeResumeCommand } from "./resume.ts";
+import { claudeAccountUsage } from "./usage.ts";
 
 export const claudeAdapter: AgentAdapter = {
   kind: "claude",
@@ -10,4 +11,5 @@ export const claudeAdapter: AgentAdapter = {
   hookEventToSessionUpdate,
   resumeCommand: claudeResumeCommand,
   installInstructions: claudeInstallInstructions,
+  accountUsage: claudeAccountUsage,
 };
