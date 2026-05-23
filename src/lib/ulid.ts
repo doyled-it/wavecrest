@@ -3,16 +3,21 @@ let lastTs = 0;
 let lastRand: bigint = 0n;
 
 export function ulid(): string {
-  let ts = Date.now();
+  const ts = Date.now();
   if (ts <= lastTs) {
-    lastTs = ts;
+    // Clock unchanged or rolled back: stay monotonic by bumping the random component.
+    // Leave lastTs at its current high-water mark.
+    if (lastRand >= (1n << 80n) - 1n) throw new Error("ulid: random overflow");
     lastRand += 1n;
   } else {
     lastTs = ts;
-    lastRand = BigInt.asUintN(80, BigInt("0x" + crypto.randomUUID().replace(/-/g, "").slice(0, 20)));
+    const seed = crypto.getRandomValues(new Uint8Array(10));
+    let r = 0n;
+    for (const b of seed) r = (r << 8n) | BigInt(b);
+    lastRand = r;
   }
   let out = "";
-  let t = BigInt(ts);
+  let t = BigInt(lastTs);
   for (let i = 9; i >= 0; i--) { out = ENC[Number(t & 0x1fn)]! + out; t >>= 5n; }
   let r = lastRand;
   let randStr = "";

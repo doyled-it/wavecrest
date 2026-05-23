@@ -23,8 +23,16 @@ export class FrameDecoder {
       const len = new DataView(this.buf.buffer, this.buf.byteOffset, 4).getUint32(0, false);
       if (this.buf.length < 4 + len) return;
       const payload = this.buf.subarray(4, 4 + len);
-      const msg = JSON.parse(new TextDecoder().decode(payload));
+      const text = new TextDecoder().decode(payload);
+      // Advance the buffer BEFORE attempting to parse, so a bad frame doesn't
+      // leave the decoder stuck on the same bytes on the next call.
       this.buf = this.buf.subarray(4 + len);
+      let msg: unknown;
+      try {
+        msg = JSON.parse(text);
+      } catch {
+        throw new Error(`rpc: malformed JSON in frame of ${len} bytes`);
+      }
       yield msg;
     }
   }
