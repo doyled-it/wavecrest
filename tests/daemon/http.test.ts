@@ -159,6 +159,36 @@ describe("serveUi", () => {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("serves index.html with /ui/assets/ script tag and serves asset file", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "wc-ui-"));
+    try {
+      const indexHtml = `<!doctype html><html><head><script src="/ui/assets/x.js"></script></head><body></body></html>`;
+      writeFileSync(join(tmpDir, "index.html"), indexHtml);
+      const assetsDir = join(tmpDir, "assets");
+      const { mkdirSync } = await import("fs");
+      mkdirSync(assetsDir, { recursive: true });
+      writeFileSync(join(assetsDir, "x.js"), "/* marker-text-abc123 */");
+
+      const handler = serveUi(tmpDir);
+
+      // /ui/ should serve index.html containing the /ui/assets/ reference
+      const indexRes = handler(new Request("http://localhost/ui/"));
+      expect(indexRes).not.toBeNull();
+      expect(indexRes!.status).toBe(200);
+      const indexBody = await indexRes!.text();
+      expect(indexBody).toContain("/ui/assets/x.js");
+
+      // /ui/assets/x.js should serve the asset with the marker text
+      const assetRes = handler(new Request("http://localhost/ui/assets/x.js"));
+      expect(assetRes).not.toBeNull();
+      expect(assetRes!.status).toBe(200);
+      const assetBody = await assetRes!.text();
+      expect(assetBody).toContain("marker-text-abc123");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
