@@ -4,6 +4,8 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer } from "./http.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots } from "../db/queries.ts";
+import { attachSse } from "./sse.ts";
 import type { Database } from "bun:sqlite";
 
 export interface Daemon {
@@ -74,10 +76,25 @@ function makeRpcHandler(_db: Database) {
   };
 }
 
-function makeHttpHandler(_db: Database) {
+function makeHttpHandler(db: Database) {
   return (req: Request): Response => {
     const url = new URL(req.url);
     if (url.pathname === "/api/health") return Response.json({ ok: true });
+
+    if (url.pathname === "/api/sessions" && req.method === "GET") {
+      const sessions = listActiveSessions(db).map(s => ({
+        ...s,
+        rollup: getRollup(db, s.id),
+      }));
+      return Response.json(sessions);
+    }
+
+    if (url.pathname === "/api/usage" && req.method === "GET") {
+      return Response.json({ claude: latestUsageSnapshots(db, "claude") });
+    }
+
+    if (url.pathname === "/api/events" && req.method === "GET") return attachSse();
+
     return new Response("not found", { status: 404 });
   };
 }
