@@ -19,7 +19,7 @@ export function startSockServer(path: string, handler: RpcHandler): SockServer {
       data(socket, chunk) {
         const dec = (socket.data as unknown as { dec: FrameDecoder }).dec;
         dec.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-        void (async () => {
+        (async () => {
           for (const msg of dec.drain()) {
             const m = msg as { method: string; params?: unknown; id?: unknown };
             try {
@@ -30,7 +30,7 @@ export function startSockServer(path: string, handler: RpcHandler): SockServer {
               socket.write(encodeFrame({ jsonrpc: "2.0", id: m.id, error: { code: -32000, message } }));
             }
           }
-        })();
+        })().catch(err => log.error("sock: unhandled data error", { error: String(err) }));
       },
       open(socket) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
