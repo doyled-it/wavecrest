@@ -1,0 +1,21 @@
+# wavecrest local state
+.superpowers/
+
+# node / bun
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+
+# bun
+.bun/
+bun.lockb.bak
+
+# editor
+.vscode/
+.idea/
+
+# env
+.env
+.env.local
