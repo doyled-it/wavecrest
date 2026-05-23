@@ -78,6 +78,8 @@ export function latestUsageSnapshots(db: Database, agentKind: string): UsageSnap
   return rows.map(r => ({ ...r, limit: r.limit_ }));
 }
 
+// Note: 'crashed' sessions ARE returned — they're recoverable via re-launch.
+// Only 'finished' (user-ended) and 'stopped' (user-killed) are excluded.
 export function listResumableSessions(db: Database): Session[] {
   const rows = db.query(
     "SELECT * FROM sessions WHERE auto_resume=1 AND status NOT IN ('finished','stopped') ORDER BY last_active_at DESC"

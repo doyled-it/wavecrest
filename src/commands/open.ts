@@ -22,6 +22,7 @@ export async function runOpen(
     worktreePath = join(repoRoot, ".worktrees", branch);
     mkdirSync(join(repoRoot, ".worktrees"), { recursive: true });
 
+    // LIMITATION: if the worktree path exists but tracks a *different* branch than `branch`, we reuse it as-is without warning.
     if (!existsSync(worktreePath)) {
       // Check if the branch already exists (e.g. from a previous interrupted run where
       // the worktree path was deleted but the branch ref was kept). If it does, use

@@ -15,14 +15,18 @@ export async function runRestore(): Promise<void> {
   const sessions = await callDaemon("listResumable", {}) as Session[];
 
   for (const sess of sessions) {
-    const adapter = getAdapter(sess.agent_kind);
-    const argv = adapter.resumeCommand(sess);
-    await wave.createBlock({
-      tabName: sess.branch ?? sess.display_name ?? sess.id.slice(-8),
-      cwd: sess.cwd, argv,
-      envExtra: { WAVECREST_SESSION_ID: sess.id },
-    });
-    console.log(`restored ${sess.id}`);
+    try {
+      const adapter = getAdapter(sess.agent_kind);
+      const argv = adapter.resumeCommand(sess);
+      await wave.createBlock({
+        tabName: sess.branch ?? sess.display_name ?? sess.id.slice(-8),
+        cwd: sess.cwd, argv,
+        envExtra: { WAVECREST_SESSION_ID: sess.id },
+      });
+      console.log(`restored ${sess.id}`);
+    } catch (e) {
+      console.error(`failed to restore ${sess.id}: ${(e as Error).message}`);
+    }
   }
 
   console.log(`restored ${sessions.length} session(s)`);

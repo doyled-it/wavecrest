@@ -286,4 +286,80 @@ describe("daemon RPC: registerPlannedSession + listResumable", () => {
     expect(result.threw).toBe(true);
     expect(result.errMsg).toContain("kind must be a string");
   });
+
+  test("registerPlannedSession rejects launch_argv with non-string elements", async () => {
+    const pathsModule = JSON.stringify(join(PROJECT_ROOT, "src/lib/paths.ts"));
+    const daemonModule = JSON.stringify(join(PROJECT_ROOT, "src/daemon/index.ts"));
+
+    const script = `
+      process.env.WAVECREST_HOME = ${JSON.stringify(tmpDir)};
+      const { paths } = await import(${pathsModule});
+      const { startDaemon } = await import(${daemonModule});
+      const { connect } = await import("net");
+      const { encodeFrame, FrameDecoder } = await import(${JSON.stringify(join(PROJECT_ROOT, "src/lib/rpc.ts"))});
+
+      function rpcCall(method, params) {
+        return new Promise((resolve, reject) => {
+          const sock = connect(paths.sock, () => {
+            sock.write(encodeFrame({ jsonrpc: "2.0", id: 1, method, params }));
+          });
+          const dec = new FrameDecoder();
+          sock.on("data", buf => {
+            dec.push(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+            for (const msg of dec.drain()) {
+              sock.destroy();
+              if (msg.error) reject(new Error(msg.error.message));
+              else resolve(msg.result);
+            }
+          });
+          sock.on("error", reject);
+          sock.setTimeout(3000, () => { sock.destroy(); reject(new Error("RPC timeout")); });
+        });
+      }
+
+      const daemon = await startDaemon();
+
+      let threw = false;
+      let errMsg = "";
+      try {
+        await rpcCall("registerPlannedSession", {
+          kind: "claude",
+          cwd: "/some/path",
+          branch: "feat/test",
+          worktree_path: null,
+          launch_argv: [42],
+          display_name: "feat/test",
+        });
+      } catch (e) {
+        threw = true;
+        errMsg = e.message;
+      }
+
+      await daemon.shutdown();
+      console.log(JSON.stringify({ threw, errMsg }));
+    `;
+
+    const proc = Bun.spawn(["bun", "--eval", script], {
+      env: { ...process.env, WAVECREST_HOME: tmpDir },
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: PROJECT_ROOT,
+    });
+
+    const exitCode = await proc.exited;
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+
+    expect(exitCode).toBe(0);
+
+    let result: any;
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`subprocess stdout not JSON:\n${stdout}\nstderr:\n${stderr}`);
+    }
+
+    expect(result.threw).toBe(true);
+    expect(result.errMsg).toContain("launch_argv elements");
+  });
 });

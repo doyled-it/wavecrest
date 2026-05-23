@@ -123,7 +123,11 @@ function makeRpcHandler(db: Database) {
       if (typeof kind !== "string") throw new Error("registerPlannedSession: kind must be a string");
       if (typeof cwd !== "string") throw new Error("registerPlannedSession: cwd must be a string");
       if (!Array.isArray(launch_argv)) throw new Error("registerPlannedSession: launch_argv must be an array");
+      if (launch_argv.some(el => typeof el !== "string"))
+        throw new Error("registerPlannedSession: launch_argv elements must all be strings");
+      const adapter = getAdapter(kind as AgentKind); // throws if unknown kind
       const id = ulid();
+      void adapter; // adapter validated above; reserved for future per-kind defaults
       insertSession(db, {
         id, agent_kind: kind as AgentKind, agent_session_id: null,
         workspace_id: null, wave_tab_id: null, wave_block_id: null,
