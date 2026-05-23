@@ -1,4 +1,6 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync, unlinkSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 import { paths } from "../lib/paths.ts";
 import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
@@ -6,6 +8,7 @@ import { startSockServer } from "./sock.ts";
 import { startHttpServer } from "./http.ts";
 import { listActiveSessions, getRollup, latestUsageSnapshots } from "../db/queries.ts";
 import { attachSse } from "./sse.ts";
+import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import type { Database } from "bun:sqlite";
 
 export interface Daemon {
@@ -39,9 +42,13 @@ export async function startDaemon(): Promise<Daemon> {
   const http = startHttpServer(makeHttpHandler(db));
   writeFileSync(paths.port, String(http.port));
 
+  const claudeRoot = join(homedir(), ".claude", "projects");
+  const watcher = startTranscriptWatcher(db, [claudeRoot]);
+
   log.info("daemon: ready", { port: http.port, sock: paths.sock });
 
   const shutdown = async () => {
+    watcher.stop();
     sock.close();
     http.stop();
     db.close();
