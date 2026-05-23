@@ -73,7 +73,9 @@ async function spawnDaemon(tmpDir: string): Promise<DaemonHandle> {
 
   const kill = async () => {
     proc.kill("SIGTERM");
+    const timeout = setTimeout(() => proc.kill("SIGKILL"), 5_000);
     await proc.exited;
+    clearTimeout(timeout);
   };
 
   return { port, kill };
@@ -182,7 +184,7 @@ describe("REST routes (subprocess daemon)", () => {
           wave_tab_id: null, wave_block_id: null,
           cwd: "/tmp", repo_root: null, branch: null, worktree_path: null,
           launch_argv: ["claude"], display_name: "Test session",
-          status: "running", auto_resume: false, pinned: false,
+          status: "working", auto_resume: false, pinned: false,
           created_at: 1000, last_active_at: 1001, transcript_path: null,
         };
         insertSession(db, session);

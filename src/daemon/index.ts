@@ -79,7 +79,7 @@ function makeRpcHandler(_db: Database) {
 function makeHttpHandler(db: Database) {
   return (req: Request): Response => {
     const url = new URL(req.url);
-    if (url.pathname === "/api/health") return Response.json({ ok: true });
+    if (url.pathname === "/api/health" && req.method === "GET") return Response.json({ ok: true });
 
     if (url.pathname === "/api/sessions" && req.method === "GET") {
       const sessions = listActiveSessions(db).map(s => ({
