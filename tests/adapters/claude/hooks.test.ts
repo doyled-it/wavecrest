@@ -49,6 +49,17 @@ test("claudeInstallInstructions returns hooks for all 6 event names", () => {
   }
 });
 
+test("PostToolUse → working", () => {
+  expect(hookEventToSessionUpdate("PostToolUse", { tool_name: "Read" })?.status).toBe("working");
+});
+
+test("Notification with unrelated matcher → no status, has last_active_at", () => {
+  const upd = hookEventToSessionUpdate("Notification", { matcher: "some_future_event" });
+  expect(upd).not.toBeNull();
+  expect(upd!.status).toBeUndefined();
+  expect(typeof upd!.last_active_at).toBe("number");
+});
+
 test("claudeResumeCommand without agent_session_id returns ['claude']", () => {
   const session = { agent_session_id: null } as unknown as Session;
   expect(claudeResumeCommand(session)).toEqual(["claude"]);

@@ -5,8 +5,8 @@ export function hookEventToSessionUpdate(eventName: string, payload: unknown): S
   const p = (payload ?? {}) as Record<string, any>;
   const now = Date.now();
   const base: SessionUpdate = { last_active_at: now };
-  if (p.session_id) base.agent_session_id = String(p.session_id);
-  if (p.transcript_path) base.transcript_path = String(p.transcript_path);
+  if (p.session_id != null) base.agent_session_id = String(p.session_id);
+  if (p.transcript_path != null) base.transcript_path = String(p.transcript_path);
 
   switch (eventName) {
     case "SessionStart":
