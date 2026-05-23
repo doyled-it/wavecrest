@@ -1,6 +1,9 @@
 // src/adapters/claude/transcript.ts
 import { readFile } from "fs/promises";
 import type { NormalizedMessage } from "../../types.ts";
+import { log } from "../../lib/logger.ts";
+
+const _warnedPaths = new Set<string>();
 
 export async function* parseClaudeTranscript(path: string): AsyncIterable<NormalizedMessage> {
   const text = await readFile(path, "utf8");
@@ -16,7 +19,13 @@ export async function* parseClaudeTranscript(path: string): AsyncIterable<Normal
     if (typeof entry !== "object" || entry === null) continue;
     const rec = entry as Record<string, unknown>;
 
-    const ts = Date.parse(String(rec["timestamp"] ?? rec["ts"] ?? "")) || Date.now();
+    const rawTs = String(rec["timestamp"] ?? rec["ts"] ?? "");
+    const parsed = Date.parse(rawTs);
+    if (!parsed && !_warnedPaths.has(path)) {
+      _warnedPaths.add(path);
+      log.warn("transcript contains unparseable timestamp; falling back to Date.now()", { path, rawTs });
+    }
+    const ts = parsed || Date.now();
     const msg = (typeof rec["message"] === "object" && rec["message"] !== null)
       ? (rec["message"] as Record<string, unknown>)
       : rec;

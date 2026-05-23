@@ -4,9 +4,11 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { parseClaudeTranscript } from "../../../src/adapters/claude/transcript.ts";
 
+const FIXTURE = join(import.meta.dir, "..", "..", "fixtures", "claude-transcript.jsonl");
+
 test("parses a real transcript and extracts usage", async () => {
   const msgs: any[] = [];
-  for await (const m of parseClaudeTranscript("tests/fixtures/claude-transcript.jsonl")) {
+  for await (const m of parseClaudeTranscript(FIXTURE)) {
     msgs.push(m);
   }
   const asst = msgs.filter(m => m.role === "assistant");
