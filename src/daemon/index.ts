@@ -6,9 +6,12 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer } from "./http.ts";
-import { listActiveSessions, getRollup, latestUsageSnapshots } from "../db/queries.ts";
-import { attachSse } from "./sse.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent } from "../db/queries.ts";
+import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
+import { ulid } from "../lib/ulid.ts";
+import { getAdapter } from "../adapters/registry.ts";
+import type { AgentKind } from "../types.ts";
 import type { Database } from "bun:sqlite";
 
 export interface Daemon {
@@ -76,9 +79,41 @@ export async function startDaemon(): Promise<Daemon> {
   return { shutdown };
 }
 
-function makeRpcHandler(_db: Database) {
-  return async (method: string): Promise<unknown> => {
+function makeRpcHandler(db: Database) {
+  return async (method: string, params: unknown): Promise<unknown> => {
     if (method === "ping") return { ok: true };
+
+    if (method === "hook") {
+      const { kind, event, payload } = params as { kind: AgentKind; event: string; payload: unknown };
+      const adapter = getAdapter(kind);
+      const upd = adapter.hookEventToSessionUpdate(event, payload);
+      if (!upd) return { ok: true };
+
+      let session = upd.agent_session_id ? findSessionByAgentSessionId(db, upd.agent_session_id) : null;
+      if (!session && upd.agent_session_id) {
+        // adopt wild session
+        const id = ulid();
+        insertSession(db, {
+          id, agent_kind: kind, agent_session_id: upd.agent_session_id,
+          workspace_id: null, wave_tab_id: null, wave_block_id: null,
+          cwd: process.env.PWD ?? "/", repo_root: null, branch: null, worktree_path: null,
+          launch_argv: ["claude"], display_name: null,
+          status: upd.status ?? "working", auto_resume: false, pinned: false,
+          created_at: Date.now(), last_active_at: upd.last_active_at ?? Date.now(),
+          transcript_path: upd.transcript_path ?? null,
+        });
+        session = findSessionByAgentSessionId(db, upd.agent_session_id);
+      }
+      if (session) {
+        if (upd.status) updateSessionStatus(db, session.id, upd.status, upd.last_active_at ?? Date.now());
+        insertEvent(db, { session_id: session.id, ts: Date.now(), kind: event, payload_json: JSON.stringify(payload) });
+        broadcast("session", { id: session.id });
+      }
+      return { ok: true };
+    }
+
+    if (method === "listSessions") return listActiveSessions(db);
+
     throw new Error(`unknown method: ${method}`);
   };
 }
