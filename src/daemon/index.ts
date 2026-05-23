@@ -1,11 +1,12 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync, unlinkSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { homedir } from "os";
+import { fileURLToPath } from "url";
 import { paths } from "../lib/paths.ts";
 import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
-import { startHttpServer } from "./http.ts";
+import { startHttpServer, serveUi } from "./http.ts";
 import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
@@ -148,8 +149,14 @@ function makeRpcHandler(db: Database) {
   };
 }
 
+const _uiDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist", "ui");
+const _ui = serveUi(_uiDir);
+
 function makeHttpHandler(db: Database) {
   return (req: Request): Response => {
+    const uiResp = _ui(req);
+    if (uiResp) return uiResp;
+
     const url = new URL(req.url);
     if (url.pathname === "/api/health" && req.method === "GET") return Response.json({ ok: true });
 

@@ -1,0 +1,17 @@
+:root { color-scheme: dark; --bg:#1a1b26; --fg:#a9b1d6; --card:#24283b; --muted:#565f89;
+        --ok:#9ece6a; --warn:#e0af68; --bad:#f7768e; --accent:#7aa2f7; }
+body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,sans-serif; font-size:13px; }
+.app { display:grid; grid-template-columns: 110px 1fr; gap:14px; padding:14px; height:100vh; box-sizing:border-box; }
+.rail { display:flex; flex-direction:column; gap:14px; align-items:center; }
+.rail .gauge { text-align:center; }
+.rail .gauge .label { font-size:9px; color:var(--muted); margin-top:3px; text-transform:uppercase; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; align-content:start; }
+.card { background:var(--card); padding:10px; border-radius:6px; border-left:3px solid var(--muted); }
+.card.working { border-left-color: var(--ok); }
+.card.awaiting { border-left-color: var(--warn); }
+.card.error, .card.crashed { border-left-color: var(--bad); }
+.card .head { display:flex; justify-content:space-between; }
+.card .name { font-weight:600; }
+.card .meta { font-size:11px; color:var(--accent); }
+.card .bar { background:var(--bg); height:3px; border-radius:2px; margin-top:6px; overflow:hidden; }
+.card .bar > div { height:100%; background:var(--ok); }

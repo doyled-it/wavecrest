@@ -1,4 +1,23 @@
 import { log } from "../lib/logger.ts";
+import { join, resolve } from "path";
+import { existsSync, readFileSync } from "fs";
+
+export function serveUi(uiDir: string): (req: Request) => Response | null {
+  return (req) => {
+    const url = new URL(req.url);
+    if (!url.pathname.startsWith("/ui")) return null;
+    const rel = url.pathname.replace(/^\/ui\/?/, "") || "index.html";
+    const file = resolve(join(uiDir, rel));
+    // Path traversal guard: resolved path must be inside uiDir
+    if (!file.startsWith(resolve(uiDir))) return new Response("not found", { status: 404 });
+    if (!existsSync(file)) return new Response("not found", { status: 404 });
+    const body = readFileSync(file);
+    const type = file.endsWith(".html") ? "text/html"
+               : file.endsWith(".js")   ? "text/javascript"
+               : file.endsWith(".css")  ? "text/css" : "application/octet-stream";
+    return new Response(body, { headers: { "Content-Type": type } });
+  };
+}
 
 export interface HttpServer {
   stop(): void;
