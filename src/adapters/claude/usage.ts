@@ -34,13 +34,22 @@ export function _resetMetaForTests(): void {
 }
 
 async function spawnMeta(): Promise<MetaProcess> {
-  const p = pty.spawn("claude", [], {
-    name: "xterm-256color",
-    cols: COLS,
-    rows: ROWS,
-    cwd: "/tmp",
-    env: process.env as any,
-  });
+  let p;
+  try {
+    p = pty.spawn("claude", [], {
+      name: "xterm-256color",
+      cols: COLS,
+      rows: ROWS,
+      cwd: "/tmp",
+      env: process.env as any,
+    });
+  } catch (e: any) {
+    if (e?.code === "ENOENT") {
+      log.warn("claude not found on PATH, usage polling disabled");
+      return { poll: async () => [], kill: () => {} };
+    }
+    throw e;
+  }
   let buf = "";
   p.onData(d => {
     buf += d;
@@ -84,11 +93,15 @@ async function spawnMeta(): Promise<MetaProcess> {
 }
 
 function looksIdle(b: string): boolean {
-  return /\b(╭|>)/.test(b.slice(-2000));
+  return /[╭>]/.test(b.slice(-2000));
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 }
 
 const BUCKET_PATTERNS: Array<[RegExp, UsageSnapshot["scope"], string | null]> = [
@@ -99,10 +112,11 @@ const BUCKET_PATTERNS: Array<[RegExp, UsageSnapshot["scope"], string | null]> = 
 ];
 
 export function parseUsage(text: string): UsageSnapshot[] {
+  const clean = stripAnsi(text);
   const out: UsageSnapshot[] = [];
   const now = Date.now();
   for (const [re, scope, key] of BUCKET_PATTERNS) {
-    const m = text.match(re);
+    const m = clean.match(re);
     if (!m || m[1] === undefined || m[2] === undefined) continue;
     out.push({
       agent_kind: "claude",

@@ -21,8 +21,10 @@ export function startUsagePoller(db: Database): Poller {
       if (!a.accountUsage) continue;
       try {
         const snaps = await a.accountUsage();
-        for (const s of snaps) insertUsageSnapshot(db, s);
-        broadcast("usage", { kind: a.kind });
+        if (snaps.length > 0) {
+          for (const s of snaps) insertUsageSnapshot(db, s);
+          broadcast("usage", { kind: a.kind });
+        }
       } catch (e) {
         log.warn("usage poll error", { kind: a.kind, error: String(e) });
       }
