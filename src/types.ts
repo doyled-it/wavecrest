@@ -61,6 +61,7 @@ export interface SessionUpdate {
   agent_session_id?: string;
   transcript_path?: string;
   last_active_at?: number;
+  cwd?: string;
 }
 
 export interface NormalizedMessage {

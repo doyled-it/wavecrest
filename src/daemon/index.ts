@@ -88,6 +88,9 @@ function makeRpcHandler(db: Database) {
       const adapter = getAdapter(kind);
       const upd = adapter.hookEventToSessionUpdate(event, payload);
       if (!upd) return { ok: true };
+      if (!upd.agent_session_id && event === "SessionStart") {
+        log.warn("hook: SessionStart missing session_id, skipping adoption");
+      }
 
       let session = upd.agent_session_id ? findSessionByAgentSessionId(db, upd.agent_session_id) : null;
       if (!session && upd.agent_session_id) {
@@ -96,7 +99,7 @@ function makeRpcHandler(db: Database) {
         insertSession(db, {
           id, agent_kind: kind, agent_session_id: upd.agent_session_id,
           workspace_id: null, wave_tab_id: null, wave_block_id: null,
-          cwd: process.env.PWD ?? "/", repo_root: null, branch: null, worktree_path: null,
+          cwd: upd.cwd ?? process.env.PWD ?? "/", repo_root: null, branch: null, worktree_path: null,
           launch_argv: ["claude"], display_name: null,
           status: upd.status ?? "working", auto_resume: false, pinned: false,
           created_at: Date.now(), last_active_at: upd.last_active_at ?? Date.now(),

@@ -16,10 +16,15 @@ export async function runHook(event: string): Promise<void> {
   });
 }
 
+let _id = 0;
+function nextId() { return ++_id; }
+
 export function callDaemon(method: string, params: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
     const sock = connect(paths.sock, () => {
-      sock.write(encodeFrame({ jsonrpc: "2.0", id: 1, method, params }));
+      sock.write(encodeFrame({ jsonrpc: "2.0", id: nextId(), method, params }));
     });
     const dec = new FrameDecoder();
     sock.on("data", (buf: Buffer) => {
@@ -27,14 +32,11 @@ export function callDaemon(method: string, params: unknown): Promise<unknown> {
       for (const msg of dec.drain()) {
         const m = msg as { result?: unknown; error?: { message: string } };
         sock.destroy();
-        if (m.error) reject(new Error(m.error.message));
-        else resolve(m.result);
+        if (m.error) done(() => reject(new Error(m.error!.message)));
+        else done(() => resolve(m.result));
       }
     });
-    sock.on("error", reject);
-    sock.setTimeout(2000, () => {
-      sock.destroy();
-      reject(new Error("daemon RPC timeout"));
-    });
+    sock.on("error", e => done(() => reject(e)));
+    sock.setTimeout(2000, () => { sock.destroy(); done(() => reject(new Error("daemon RPC timeout"))); });
   });
 }

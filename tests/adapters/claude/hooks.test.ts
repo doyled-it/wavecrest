@@ -69,3 +69,16 @@ test("claudeResumeCommand with agent_session_id returns resume args", () => {
   const session = { agent_session_id: "abc-123" } as unknown as Session;
   expect(claudeResumeCommand(session)).toEqual(["claude", "--resume", "abc-123"]);
 });
+
+test("hookEventToSessionUpdate captures cwd when present on payload", () => {
+  const upd = hookEventToSessionUpdate("SessionStart", {
+    session_id: "def-456",
+    cwd: "/Users/x/projects/myrepo",
+  });
+  expect(upd?.cwd).toBe("/Users/x/projects/myrepo");
+});
+
+test("hookEventToSessionUpdate omits cwd when absent from payload", () => {
+  const upd = hookEventToSessionUpdate("SessionStart", { session_id: "ghi-789" });
+  expect(upd?.cwd).toBeUndefined();
+});

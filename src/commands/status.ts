@@ -2,7 +2,11 @@ import { callDaemon } from "./hook.ts";
 import type { Session } from "../types.ts";
 
 export async function runStatus(): Promise<void> {
-  const sessions = await callDaemon("listSessions", {}) as Session[];
+  const sessions = await callDaemon("listSessions", {}).catch(() => null) as Session[] | null;
+  if (sessions === null) {
+    console.error("wavecrest: daemon not running (try: wavecrest daemon)");
+    process.exit(1);
+  }
   if (sessions.length === 0) {
     console.log("(no active sessions)");
     return;

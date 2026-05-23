@@ -10,7 +10,7 @@ export interface WaveBridge {
 function run(argv: [string, ...string[]], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<{ stdout: string; code: number }> {
   return new Promise(resolve => {
     const [cmd, ...args] = argv;
-    const p = spawn(cmd, args, { ...opts, stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawn(cmd, args, { ...opts, stdio: ["ignore", "pipe", "inherit"] });
     let out = "";
     p.stdout.on("data", (d: Buffer) => { out += d; });
     p.on("close", (code: number | null) => resolve({ stdout: out, code: code ?? -1 }));
