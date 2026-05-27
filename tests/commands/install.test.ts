@@ -171,7 +171,7 @@ test("installWaveWidget writes wavecrest entry", () => {
   installWaveWidget(widgetsPath);
   const w = JSON.parse(readFileSync(widgetsPath, "utf8"));
   expect(w.wavecrest).toBeDefined();
-  expect(w.wavecrest.url).toBe("http://127.0.0.1:17321/ui/");
+  expect(w.wavecrest.blockdef.meta.url).toBe("http://127.0.0.1:17321/ui/");
 });
 
 test("installWaveWidget is idempotent", () => {
