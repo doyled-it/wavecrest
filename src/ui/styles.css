@@ -2,6 +2,69 @@
         --ok:#9ece6a; --warn:#e0af68; --bad:#f7768e; --accent:#7aa2f7; }
 body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,sans-serif; font-size:13px; }
 .app { display:grid; grid-template-columns: 110px 1fr; gap:14px; padding:14px; height:100vh; box-sizing:border-box; }
+.main { display:flex; flex-direction:column; gap:10px; min-width:0; overflow:auto; }
+.new-toggle {
+  align-self:flex-start; background:transparent; color:var(--accent); border:1px dashed var(--muted);
+  padding:6px 12px; border-radius:6px; font-size:11px; cursor:pointer;
+}
+.new-toggle:hover { background:var(--card); border-color:var(--accent); }
+.new-form {
+  background:var(--card); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px;
+  border-left:3px solid var(--accent);
+}
+.new-row { display:flex; gap:6px; }
+.new-row input { flex:1; background:var(--bg); color:var(--fg); border:1px solid var(--muted);
+                 padding:5px 8px; border-radius:4px; font-size:12px; font-family:inherit; }
+.new-controls { align-items:center; }
+.new-controls label { display:flex; align-items:center; gap:4px; font-size:11px; }
+.new-controls select { background:var(--bg); color:var(--fg); border:1px solid var(--muted);
+                       padding:3px 4px; border-radius:4px; font-size:11px; }
+.new-controls .spacer { flex:1; }
+.new-controls button { background:var(--card); color:var(--fg); border:1px solid var(--muted);
+                       padding:4px 12px; border-radius:4px; font-size:11px; cursor:pointer; }
+.new-controls button[type=submit] { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:600; }
+.new-controls button:disabled { opacity:0.5; cursor:not-allowed; }
+.new-err { color:var(--bad); font-size:11px; }
+.card .name { cursor:text; }
+.card .name:hover { color:var(--accent); }
+.card.focusable { cursor:pointer; }
+.card.focusable:hover { outline:1px solid var(--accent); outline-offset:-1px; }
+.card .head-right { display:flex; align-items:center; gap:6px; }
+.card .card-delete {
+  background:transparent; color:var(--muted); border:none; cursor:pointer;
+  font-size:16px; line-height:1; padding:0 4px; border-radius:3px;
+}
+.card .card-delete:hover { color:var(--bad); background:var(--bg); }
+.name-edit {
+  background:var(--bg); color:var(--fg); border:1px solid var(--accent);
+  padding:2px 6px; border-radius:3px; font-size:13px; font-weight:600; font-family:inherit;
+  min-width:120px;
+}
+.picker {
+  background:var(--bg); border:1px solid var(--muted); border-radius:6px;
+  padding:8px; display:flex; flex-direction:column; gap:6px; max-height:360px;
+}
+.picker-bar { display:flex; gap:6px; align-items:center; }
+.picker-bar button { background:var(--card); color:var(--fg); border:1px solid var(--muted);
+                     padding:3px 8px; border-radius:3px; font-size:11px; cursor:pointer; }
+.picker-bar button:disabled { opacity:0.4; cursor:not-allowed; }
+.picker-crumbs { font-size:11px; color:var(--muted); overflow-x:auto; white-space:nowrap; flex:1; }
+.picker-crumbs .crumb { cursor:pointer; color:var(--accent); }
+.picker-crumbs .crumb:hover { text-decoration:underline; }
+.picker-crumbs .sep { color:var(--muted); margin:0 2px; }
+.picker-list { overflow:auto; max-height:220px; background:var(--card); border-radius:4px; padding:4px; }
+.picker-item { padding:4px 6px; border-radius:3px; cursor:pointer; font-size:12px; }
+.picker-item:hover { background:var(--bg); }
+.picker-item.is-repo { color:var(--ok); }
+.picker-name { user-select:none; }
+.picker-empty { color:var(--muted); font-size:11px; padding:6px; }
+.picker-actions { display:flex; gap:6px; align-items:center; }
+.picker-current { flex:1; font-size:11px; color:var(--muted); font-family:ui-monospace,monospace;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.picker-actions button { background:var(--card); color:var(--fg); border:1px solid var(--muted);
+                         padding:4px 12px; border-radius:4px; font-size:11px; cursor:pointer; }
+.picker-actions button.primary { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:600; }
+.picker-err { color:var(--bad); font-size:11px; padding:8px; }
 .rail { display:flex; flex-direction:column; gap:14px; align-items:center; }
 .rail .gauge { text-align:center; }
 .rail .gauge .label { font-size:9px; color:var(--muted); margin-top:3px; text-transform:uppercase; }

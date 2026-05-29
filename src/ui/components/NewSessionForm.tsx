@@ -13,6 +13,7 @@ export function NewSessionForm({ sessions }: { sessions: Session[] }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [keystrokeStep, setKeystrokeStep] = useState<{ beforeTabIds: string[]; payload: Record<string, unknown> } | null>(null);
 
   const recentCwds = useMemo(() => {
     const set = new Set<string>();
@@ -35,26 +36,54 @@ export function NewSessionForm({ sessions }: { sessions: Session[] }) {
     setErr(null);
   };
 
+  const payloadFromForm = () => ({
+    branch: branch.trim(),
+    display_name: name.trim() || undefined,
+    cwd: cwd.trim() || undefined,
+    worktree,
+    agent,
+  });
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!branch.trim()) { setErr("branch is required"); return; }
     setBusy(true); setErr(null);
     try {
-      const r = await fetch("/api/open", {
+      if (newTab) {
+        // Two-step: snapshot tabs, ask user to press Cmd+T, then finalize.
+        const r = await fetch("/api/open/snapshot", { method: "POST" });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`);
+        setKeystrokeStep({ beforeTabIds: data.tabIds ?? [], payload: payloadFromForm() });
+      } else {
+        const r = await fetch("/api/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payloadFromForm(), new_tab: false }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`);
+        setBranch(""); setName(""); setOpen(false);
+      }
+    } catch (e: unknown) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finalize = async () => {
+    if (!keystrokeStep) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/open/finalize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          branch: branch.trim(),
-          display_name: name.trim() || undefined,
-          cwd: cwd.trim() || undefined,
-          worktree,
-          new_tab: newTab,
-          agent,
-        }),
+        body: JSON.stringify({ ...keystrokeStep.payload, beforeTabIds: keystrokeStep.beforeTabIds }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`);
-      setBranch(""); setName(""); setOpen(false);
+      setBranch(""); setName(""); setOpen(false); setKeystrokeStep(null);
     } catch (e: unknown) {
       setErr((e as Error).message);
     } finally {
@@ -64,6 +93,22 @@ export function NewSessionForm({ sessions }: { sessions: Session[] }) {
 
   if (!open) {
     return <button className="new-toggle" onClick={toggle} type="button">+ new session</button>;
+  }
+
+  if (keystrokeStep) {
+    return (
+      <div className="new-form">
+        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+          Press <kbd style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 3, fontFamily: "ui-monospace, monospace", border: "1px solid var(--muted)" }}>⌘T</kbd> in Wave to open a new tab, then click <b>Continue</b>.
+          {err ? <div className="new-err">{err}</div> : null}
+        </div>
+        <div className="new-row new-controls" style={{ marginTop: 8 }}>
+          <div className="spacer" />
+          <button type="button" onClick={() => { setKeystrokeStep(null); setErr(null); }} disabled={busy}>cancel</button>
+          <button type="button" onClick={finalize} disabled={busy}>{busy ? "detecting..." : "continue"}</button>
+        </div>
+      </div>
+    );
   }
 
   return (
