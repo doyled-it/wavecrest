@@ -78,9 +78,17 @@ export function installWaveWidget(widgetsPath: string): void {
   }
 
   widgets["wavecrest"] = {
-    type: "web",
-    url: "http://127.0.0.1:17321/ui/",
-    title: "Wavecrest",
+    icon: "gauge-high",
+    label: "wavecrest",
+    color: "#7aa2f7",
+    description: "wavecrest agent sessions dashboard",
+    blockdef: {
+      meta: {
+        view: "web",
+        url: "http://127.0.0.1:17321/ui/",
+        pinnedurl: "http://127.0.0.1:17321/ui/",
+      },
+    },
   };
 
   const dir = widgetsPath.split("/").slice(0, -1).join("/");

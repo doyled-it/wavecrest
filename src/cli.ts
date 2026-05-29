@@ -6,6 +6,7 @@ import { runOpen } from "./commands/open.ts";
 import { runRestore } from "./commands/restore.ts";
 import { runInstall } from "./commands/install.ts";
 import { runUninstall } from "./commands/uninstall.ts";
+import { runAuthSet } from "./commands/auth.ts";
 
 const cli = cac("wavecrest");
 cli.command("daemon", "Run the wavecrest daemon in the foreground").action(runDaemon);
@@ -17,6 +18,8 @@ cli.command("open <branch>", "Open a Wave block with a new agent session")
    .option("--cwd <path>", "Base directory (default: $PWD)")
    .action(runOpen);
 cli.command("restore", "Re-summon Wave blocks for all auto-resume sessions").action(runRestore);
+cli.command("auth-set", "Capture WAVETERM_JWT from the current shell and store it for the daemon (run once from a fresh Wave block)")
+   .action(runAuthSet);
 cli.command("install", "Install hooks, widget, and login agent")
    .option("--bin-path <path>", "Path to the wavecrest binary (defaults to current executable)")
    .action(runInstall);

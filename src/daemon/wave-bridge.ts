@@ -41,10 +41,15 @@ export interface WaveBridge {
   setWaveEnv(env: Record<string, string>): void;
   createBlock(opts: { cwd: string; argv: string[]; envExtra: Record<string, string>; targetTabId?: string }): Promise<{ ok: boolean; error?: string }>;
   focusBlock(blockId: string): Promise<{ ok: boolean; error?: string }>;
+  focusTab(tabId: string): Promise<{ ok: boolean; error?: string }>;
   createTab(): Promise<{ ok: boolean; error?: string; tabId?: string }>;
   renameTab(tabId: string, name: string): Promise<{ ok: boolean; error?: string }>;
   launchWidget(widgetName: string, targetTabId: string): Promise<{ ok: boolean; error?: string }>;
   createSessionTab(opts: CreateSessionTabOpts): Promise<CreateSessionTabResult>;
+  /** Snapshot current tabids — caller will instruct the user to Cmd+T themselves. */
+  snapshotTabs(): Promise<{ ok: boolean; error?: string; tabIds?: string[] }>;
+  /** Detect the new tab by diffing against a snapshot, then fill it. */
+  fillSessionTab(opts: CreateSessionTabOpts & { beforeTabIds: string[] }): Promise<CreateSessionTabResult>;
 }
 
 const WAVE_ENV_PATH = join(paths.root, "wave-env.json");
@@ -99,7 +104,6 @@ function run(
 }
 
 function runOsascript(statements: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-  // Each statement is passed as a separate -e flag to osascript.
   const args: string[] = [];
   for (const s of statements) { args.push("-e", s); }
   return new Promise(resolve => {
@@ -111,6 +115,62 @@ function runOsascript(statements: string[]): Promise<{ stdout: string; stderr: s
       });
     });
   });
+}
+
+const CLICLICK_CANDIDATES = ["/opt/homebrew/bin/cliclick", "/usr/local/bin/cliclick"];
+function findCliclick(): string | null {
+  for (const p of CLICLICK_CANDIDATES) if (existsSync(p)) return p;
+  return null;
+}
+
+/** Activate Wave then send Cmd+T. Prefers cliclick (granular Accessibility grant)
+ *  and falls back to osascript+System Events when cliclick isn't installed. */
+async function sendCmdT(): Promise<{ ok: boolean; error?: string }> {
+  // Activate Wave first (no Accessibility needed).
+  await new Promise<void>(resolve => {
+    execFile("open", ["-a", "Wave"], () => resolve());
+  });
+  await sleep(250);
+
+  const cliclick = findCliclick();
+  if (cliclick) {
+    const r = await new Promise<{ stderr: string; code: number }>(resolve => {
+      execFile(cliclick, ["kd:cmd", "t:t", "ku:cmd"], (err, _stdout, stderr) => {
+        resolve({
+          stderr: stderr ?? "",
+          code: err ? ((err as NodeJS.ErrnoException & { code?: number }).code ?? -1) : 0,
+        });
+      });
+    });
+    if (r.code === 0) return { ok: true };
+    const msg = r.stderr.trim();
+    if (msg.includes("Accessibility")) {
+      return {
+        ok: false,
+        error:
+          "cliclick needs Accessibility permission. Open System Settings → Privacy & Security → " +
+          "Accessibility, click +, and add /opt/homebrew/bin/cliclick. Then try again.",
+      };
+    }
+    return { ok: false, error: `cliclick failed: ${msg}` };
+  }
+
+  // Fallback: osascript (likely to be TCC-blocked from a daemon, but try anyway).
+  const os = await runOsascript([
+    'tell application "System Events" to keystroke "t" using {command down}',
+  ]);
+  if (os.code === 0) return { ok: true };
+  const msg = (os.stderr || os.stdout).trim();
+  if (msg.includes("-1743") || msg.includes("not authorized") || msg.includes("assistive") || msg.includes("1002")) {
+    return {
+      ok: false,
+      error:
+        "Cannot send keystrokes. Install cliclick (`brew install cliclick`) and grant it " +
+        "Accessibility permission (System Settings → Privacy & Security → Accessibility, " +
+        "add /opt/homebrew/bin/cliclick).",
+    };
+  }
+  return { ok: false, error: `osascript failed: ${msg}` };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -201,6 +261,31 @@ export const wave: WaveBridge = {
     return { ok: true };
   },
 
+  async focusTab(tabId: string) {
+    if (!(await _available())) return { ok: false, error: "wsh not available" };
+    if (!cachedEnv.WAVETERM_JWT) return { ok: false, error: "no WAVETERM_JWT stored" };
+    const workspaceId = cachedEnv.WAVETERM_WORKSPACEID;
+    if (!workspaceId) return { ok: false, error: "no WAVETERM_WORKSPACEID stored" };
+    // Find any block in the target tab so we can call focusblock on it. Focusing a
+    // block in another tab triggers Wave to switch to that tab as a side effect.
+    const list = await run([WSH, "blocks", "list", "--workspace", workspaceId, "--json"]);
+    if (list.code !== 0) return { ok: false, error: "couldn't list blocks" };
+    let firstBlockInTab: string | undefined;
+    try {
+      const blocks = JSON.parse(list.stdout) as Array<{ blockid?: string; tabid?: string }>;
+      for (const b of blocks) {
+        if (b.tabid === tabId && b.blockid) { firstBlockInTab = b.blockid; break; }
+      }
+    } catch { /* fall through */ }
+    if (!firstBlockInTab) return { ok: false, error: "no blocks in that tab — tab may have been closed" };
+    const r = await run([WSH, "focusblock", "-b", firstBlockInTab]);
+    if (r.code !== 0) {
+      const msg = (r.stderr || r.stdout || "wsh focusblock failed").trim().split("\n")[0];
+      return { ok: false, error: msg };
+    }
+    return { ok: true };
+  },
+
   async createTab() {
     if (!(await _available())) return { ok: false, error: "wsh not available" };
     if (!cachedEnv.WAVETERM_JWT) return { ok: false, error: "no WAVETERM_JWT stored — run `wavecrest auth-set`" };
@@ -211,28 +296,11 @@ export const wave: WaveBridge = {
     // 1. Snapshot existing tabids.
     const beforeTabIds = await getCurrentTabIds(workspaceId);
 
-    // 2. Trigger Cmd+T in Wave via AppleScript.
-    //    NOTE: the calling process (wavecrest daemon) must have Accessibility permission
-    //    in System Settings → Privacy & Security → Accessibility for this to work.
-    const osResult = await runOsascript([
-      'tell application "Wave" to activate',
-      'delay 0.3',
-      'tell application "System Events" to keystroke "t" using {command down}',
-    ]);
-    if (osResult.code !== 0) {
-      const msg = (osResult.stderr || osResult.stdout || "osascript failed").trim();
-      // -1743 is the macOS "not authorized for assistive access" error code.
-      if (msg.includes("-1743") || msg.includes("not authorized") || msg.includes("assistive")) {
-        return {
-          ok: false,
-          error:
-            "wavecrest daemon needs Accessibility permission to create tabs. " +
-            "Open System Settings → Privacy & Security → Accessibility, click +, " +
-            "and add the wavecrest binary. Then try again.",
-        };
-      }
-      log.warn("wave bridge: createTab osascript failed", { code: osResult.code, msg });
-      return { ok: false, error: `osascript failed: ${msg}` };
+    // 2. Activate Wave then send Cmd+T.
+    const keyResult = await sendCmdT();
+    if (!keyResult.ok) {
+      log.warn("wave bridge: createTab sendCmdT failed", { error: keyResult.error });
+      return { ok: false, error: keyResult.error };
     }
 
     // 3. Poll for a new tabid to appear (Wave creates a default block in the new tab
@@ -286,6 +354,62 @@ export const wave: WaveBridge = {
     return { ok: true };
   },
 
+  async snapshotTabs() {
+    if (!(await _available())) return { ok: false, error: "wsh not available" };
+    if (!cachedEnv.WAVETERM_JWT) return { ok: false, error: "no WAVETERM_JWT stored — run `wavecrest auth-set`" };
+    const workspaceId = cachedEnv.WAVETERM_WORKSPACEID;
+    if (!workspaceId) return { ok: false, error: "no WAVETERM_WORKSPACEID stored" };
+    const tabIds = Array.from(await getCurrentTabIds(workspaceId));
+    return { ok: true, tabIds };
+  },
+
+  async fillSessionTab({ displayName, cwd, argv, envExtra, includeDashboard, beforeTabIds }) {
+    if (!cachedEnv.WAVETERM_JWT) return { ok: false, error: "no WAVETERM_JWT stored" };
+    const workspaceId = cachedEnv.WAVETERM_WORKSPACEID!;
+    const before = new Set(beforeTabIds);
+
+    // Poll for a new tabid (up to 5s). The user just pressed Cmd+T.
+    let newTabId: string | undefined;
+    for (let i = 0; i < 25; i++) {
+      await sleep(200);
+      const after = await getCurrentTabIds(workspaceId);
+      for (const id of after) if (!before.has(id)) { newTabId = id; break; }
+      if (newTabId) break;
+    }
+    if (!newTabId) {
+      return { ok: false, error: "no new tab detected — did you press ⌘T in Wave?" };
+    }
+
+    const preExisting = new Set<string>();
+    try {
+      const r = await run([WSH, "blocks", "list", "--workspace", workspaceId, "--json"]);
+      if (r.code === 0) {
+        const blocks = JSON.parse(r.stdout) as Array<{ blockid?: string; tabid?: string }>;
+        for (const b of blocks) if (b.tabid === newTabId && b.blockid) preExisting.add(b.blockid);
+      }
+    } catch {}
+
+    await wave.renameTab(newTabId, displayName);
+
+    // Create blocks in this order: terminal first → dashboard second.
+    // Wave's autolayout puts the second block to the right, so claude ends up on
+    // the left and the dashboard on the right.
+    const blockResult = await wave.createBlock({ cwd, argv, envExtra, targetTabId: newTabId });
+    if (!blockResult.ok) return { ok: false, error: blockResult.error, tabId: newTabId };
+
+    if (includeDashboard) {
+      const w = await wave.launchWidget("wavecrest", newTabId);
+      if (!w.ok) log.warn("fillSessionTab: launchWidget failed", { error: w.error });
+    }
+
+    for (const blockId of preExisting) {
+      const del = await run([WSH, "deleteblock", "-b", blockId]);
+      if (del.code !== 0) log.warn("fillSessionTab: delete placeholder failed", { blockId });
+    }
+
+    return { ok: true, tabId: newTabId };
+  },
+
   async createSessionTab({ displayName, cwd, argv, envExtra, includeDashboard }) {
     // 1. Create a new tab via Cmd+T and detect its id.
     const tabResult = await wave.createTab();
@@ -293,30 +417,52 @@ export const wave: WaveBridge = {
       return { ok: false, error: tabResult.error ?? "failed to create tab" };
     }
     const tabId = tabResult.tabId;
+    const workspaceId = cachedEnv.WAVETERM_WORKSPACEID!;
 
-    // 2. Rename the tab.
+    // Capture the set of block ids Wave auto-created in the new tab. We'll delete
+    // these AFTER placing our own blocks so the user only sees ours.
+    const preExistingBlockIds = new Set<string>();
+    try {
+      const r = await run([WSH, "blocks", "list", "--workspace", workspaceId, "--json"]);
+      if (r.code === 0) {
+        const blocks = JSON.parse(r.stdout) as Array<{ blockid?: string; tabid?: string }>;
+        for (const b of blocks) {
+          if (b.tabid === tabId && b.blockid) preExistingBlockIds.add(b.blockid);
+        }
+      }
+    } catch { /* best-effort */ }
+
+    // 2. Rename the tab. NOTE: this currently sets metadata but Wave reads the tab
+    //    name from the tab object itself (different field). Full rename requires the
+    //    `updatetabname` RPC which wsh doesn't expose — tracked for the upstream PR.
     const renameResult = await wave.renameTab(tabId, displayName);
     if (!renameResult.ok) {
-      // Non-fatal: log and continue.
       log.warn("wave bridge: createSessionTab: renameTab failed", { error: renameResult.error });
     }
 
-    // 3. Optionally launch the dashboard widget in the new tab.
+    // 3. Terminal first → dashboard second so Wave's autolayout puts
+    //    claude on the left and the dashboard on the right.
+    const blockResult = await wave.createBlock({ cwd, argv, envExtra, targetTabId: tabId });
+    if (!blockResult.ok) {
+      return { ok: false, error: blockResult.error ?? "terminal block creation failed", tabId };
+    }
+
     let dashboardBlockId: string | undefined;
     if (includeDashboard) {
       const widgetResult = await wave.launchWidget("wavecrest", tabId);
       if (!widgetResult.ok) {
         log.warn("wave bridge: createSessionTab: launchWidget failed", { error: widgetResult.error });
-        // Non-fatal: proceed with terminal block.
       } else {
         dashboardBlockId = undefined; // wsh launch doesn't return block id
       }
     }
 
-    // 4. Launch the terminal block (claude) in the new tab.
-    const blockResult = await wave.createBlock({ cwd, argv, envExtra, targetTabId: tabId });
-    if (!blockResult.ok) {
-      return { ok: false, error: blockResult.error ?? "terminal block creation failed", tabId };
+    // 5. Delete Wave's default placeholder block(s) so only ours remain.
+    for (const blockId of preExistingBlockIds) {
+      const del = await run([WSH, "deleteblock", "-b", blockId]);
+      if (del.code !== 0) {
+        log.warn("wave bridge: failed to delete placeholder block", { blockId, msg: (del.stderr || del.stdout).trim() });
+      }
     }
 
     return { ok: true, tabId, dashboardBlockId };
