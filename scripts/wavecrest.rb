@@ -6,7 +6,7 @@ class Wavecrest < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/doyled-it/wavecrest/releases/download/v0.1.3/wavecrest-darwin-arm64.tar.gz"
-      sha256 "PLACEHOLDER_FILL_AFTER_RELEASE"
+      sha256 "Not"
     else
       odie "wavecrest currently supports only Apple Silicon. Linux + Intel support coming in phase 2."
     end
