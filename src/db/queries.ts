@@ -23,8 +23,55 @@ export function updateSessionStatus(db: Database, id: string, status: SessionSta
 }
 
 export function listActiveSessions(db: Database): Session[] {
-  const rows = db.query("SELECT * FROM sessions WHERE status != 'finished' ORDER BY last_active_at DESC").all() as any[];
+  const rows = db.query(
+    "SELECT * FROM sessions WHERE status != 'finished' ORDER BY pinned DESC, last_active_at DESC"
+  ).all() as any[];
   return rows.map(rowToSession);
+}
+
+export interface RecentEventRow {
+  id: number;
+  session_id: string;
+  ts: number;
+  kind: string;
+  status_after: string | null;
+  status_before: string | null;
+  session_display: string | null;
+  session_branch: string | null;
+  session_cwd: string;
+}
+
+export function listRecentEvents(db: Database, limit = 50, verbose = false): RecentEventRow[] {
+  // Use LAG window function to attach the previous status_after for the same
+  // session, so the UI can render "from → to" transitions. Non-verbose mode
+  // filters to events that actually flipped status (status_after IS NOT NULL).
+  const sel =
+    `WITH enriched AS (
+       SELECT e.id, e.session_id, e.ts, e.kind, e.status_after,
+              LAG(e.status_after) OVER (PARTITION BY e.session_id ORDER BY e.id) AS status_before_raw,
+              s.display_name AS session_display,
+              s.branch       AS session_branch,
+              s.cwd          AS session_cwd,
+              s.status       AS session_current_status
+         FROM events e
+         JOIN sessions s ON s.id = e.session_id
+     )
+     SELECT id, session_id, ts, kind, status_after,
+            COALESCE(status_before_raw, '') AS status_before,
+            session_display, session_branch, session_cwd
+       FROM enriched`;
+  if (verbose) {
+    return db.query(`${sel} ORDER BY id DESC LIMIT ?`).all(limit) as any[];
+  }
+  return db.query(
+    `${sel}
+      WHERE status_after IS NOT NULL
+      ORDER BY id DESC LIMIT ?`,
+  ).all(limit) as any[];
+}
+
+export function setSessionPinned(db: Database, id: string, pinned: boolean): void {
+  db.query("UPDATE sessions SET pinned = ? WHERE id = ?").run(pinned ? 1 : 0, id);
 }
 
 export function getSession(db: Database, id: string): Session | null {
@@ -38,8 +85,8 @@ export function findSessionByAgentSessionId(db: Database, agentSessionId: string
 }
 
 export function insertEvent(db: Database, ev: Event): void {
-  db.query("INSERT INTO events (session_id, ts, kind, payload_json) VALUES (?, ?, ?, ?)")
-    .run(ev.session_id, ev.ts, ev.kind, ev.payload_json ?? null);
+  db.query("INSERT INTO events (session_id, ts, kind, payload_json, status_after) VALUES (?, ?, ?, ?, ?)")
+    .run(ev.session_id, ev.ts, ev.kind, ev.payload_json ?? null, ev.status_after ?? null);
 }
 
 export function upsertRollup(db: Database, r: TokenRollup): void {

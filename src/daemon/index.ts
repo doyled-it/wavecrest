@@ -7,7 +7,7 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer, serveUi } from "./http.ts";
-import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession } from "../db/queries.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession, listRecentEvents, setSessionPinned } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { startUsagePoller } from "./usage-poller.ts";
@@ -132,8 +132,18 @@ function makeRpcHandler(db: Database) {
         session = findSessionByAgentSessionId(db, upd.agent_session_id);
       }
       if (session) {
+        // Only mark status_after on the event if the hook actually flipped the
+        // session's status; otherwise the activity feed would falsely show a
+        // transition for things like Notification with an unknown matcher.
+        const statusChanged = upd.status && upd.status !== session.status;
         if (upd.status) updateSessionStatus(db, session.id, upd.status, upd.last_active_at ?? Date.now());
-        insertEvent(db, { session_id: session.id, ts: Date.now(), kind: event, payload_json: JSON.stringify(payload) });
+        insertEvent(db, {
+          session_id: session.id,
+          ts: Date.now(),
+          kind: event,
+          payload_json: JSON.stringify(payload),
+          status_after: statusChanged ? (upd.status ?? null) : null,
+        });
         broadcast("session", { id: session.id });
       }
       return { ok: true };
@@ -335,13 +345,15 @@ function makeHttpHandler(db: Database) {
     const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
     if (sessionMatch && req.method === "PATCH") {
       try {
-        const body = await req.json() as { display_name?: unknown };
-        if (typeof body.display_name !== "string") {
-          return Response.json({ error: "display_name required" }, { status: 400 });
-        }
+        const body = await req.json() as { display_name?: unknown; pinned?: unknown };
         const id = sessionMatch[1]!;
-        const trimmed = body.display_name.trim() || null;
-        db.query("UPDATE sessions SET display_name = ? WHERE id = ?").run(trimmed, id);
+        if (typeof body.display_name === "string") {
+          const trimmed = body.display_name.trim() || null;
+          db.query("UPDATE sessions SET display_name = ? WHERE id = ?").run(trimmed, id);
+        }
+        if (typeof body.pinned === "boolean") {
+          setSessionPinned(db, id, body.pinned);
+        }
         broadcast("session", { id });
         return Response.json({ ok: true });
       } catch (e: unknown) {
@@ -376,6 +388,12 @@ function makeHttpHandler(db: Database) {
       } catch (e: unknown) {
         return Response.json({ error: (e as Error).message }, { status: 500 });
       }
+    }
+
+    if (url.pathname === "/api/events/recent" && req.method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") ?? "60", 10);
+      const verbose = url.searchParams.get("verbose") === "1";
+      return Response.json(listRecentEvents(db, Math.max(1, Math.min(500, limit)), verbose));
     }
 
     if (url.pathname === "/api/theme" && req.method === "GET") {

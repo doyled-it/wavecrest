@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { GaugeRail } from "./components/GaugeRail.tsx";
 import { SessionGrid } from "./components/SessionGrid.tsx";
 import { NewSessionForm } from "./components/NewSessionForm.tsx";
+import { ActivityFeed } from "./components/ActivityFeed.tsx";
 import { useApi } from "./api.ts";
 import type { Session, TokenRollup, UsageSnapshot } from "../types.ts";
 
@@ -30,6 +31,7 @@ export function App() {
       <div className="main">
         <NewSessionForm sessions={sessions} />
         <SessionGrid sessions={sessions} />
+        <ActivityFeed />
       </div>
     </div>
   );

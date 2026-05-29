@@ -1,5 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Session, TokenRollup } from "../../types.ts";
+
+function fmtDuration(ms: number): string {
+  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
+  return `${Math.round(ms / 86_400_000)}d`;
+}
+
+function useNow(intervalMs = 15_000): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
@@ -11,6 +27,9 @@ function fmtTokens(n: number): string {
 export function SessionCard({ s, r }: { s: Session; r: TokenRollup | null }) {
   const turn = r ? (r.input_tokens + r.output_tokens) : 0;
   const cached = r ? r.cache_read_tokens : 0;
+  const now = useNow();
+  const sinceMs = Math.max(0, now - s.last_active_at);
+  const sinceLabel = fmtDuration(sinceMs);
 
   // Display fallback chain: explicit name → branch → cwd basename → id slice
   function cwdBase(p: string | null | undefined): string | null {
@@ -81,7 +100,20 @@ export function SessionCard({ s, r }: { s: Session; r: TokenRollup | null }) {
           <div className="name" onClick={startEdit} title="click to rename">{displayName}</div>
         )}
         <div className="head-right">
-          <span className="meta">{s.status}</span>
+          <span className="meta">{s.status} · {sinceLabel}</span>
+          <button
+            type="button"
+            className={`card-pin ${s.pinned ? "is-pinned" : ""}`}
+            title={s.pinned ? "unpin" : "pin to top"}
+            onClick={async (e) => {
+              e.stopPropagation();
+              await fetch(`/api/sessions/${s.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pinned: !s.pinned }),
+              });
+            }}
+          >{s.pinned ? "★" : "☆"}</button>
           <button
             type="button"
             className="card-delete"

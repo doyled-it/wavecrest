@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
 import init0001 from "./migrations/0001_init.sql" with { type: "text" };
+import init0002 from "./migrations/0002_event_status.sql" with { type: "text" };
 
 const migrations = [
   { version: 1, sql: init0001 },
+  { version: 2, sql: init0002 },
 ];
 
 export function runMigrations(db: Database): void {
