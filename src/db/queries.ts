@@ -87,6 +87,41 @@ export function listResumableSessions(db: Database): Session[] {
   return rows.map(rowToSession);
 }
 
+/** Find a recent unbound planned session for the same cwd, so a wild adoption can merge into it. */
+export function findPlannedSessionForAdoption(
+  db: Database,
+  cwd: string | null,
+  agentKind: string,
+): Session | null {
+  if (!cwd) return null;
+  const cutoff = Date.now() - 10 * 60 * 1000; // 10 minutes
+  const r = db.query(
+    `SELECT * FROM sessions
+     WHERE agent_session_id IS NULL
+       AND auto_resume = 1
+       AND agent_kind = ?
+       AND cwd = ?
+       AND created_at >= ?
+       AND status NOT IN ('finished','stopped','error','crashed')
+     ORDER BY created_at DESC LIMIT 1`,
+  ).get(agentKind, cwd, cutoff) as any;
+  return r ? rowToSession(r) : null;
+}
+
+/** Adopt a planned session: stamp it with the agent's session id, transcript path, status. */
+export function bindPlannedSession(
+  db: Database,
+  id: string,
+  agentSessionId: string,
+  transcriptPath: string | null,
+  status: SessionStatus,
+  ts: number,
+): void {
+  db.query(
+    `UPDATE sessions SET agent_session_id = ?, transcript_path = ?, status = ?, last_active_at = ? WHERE id = ?`,
+  ).run(agentSessionId, transcriptPath, status, ts, id);
+}
+
 function rowToSession(r: any): Session {
   let launch_argv: string[];
   try { launch_argv = JSON.parse(r.launch_argv); }

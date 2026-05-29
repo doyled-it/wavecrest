@@ -6,10 +6,20 @@ import { wave } from "../daemon/wave-bridge.ts";
 import { getAdapter } from "../adapters/registry.ts";
 import type { AgentKind } from "../types.ts";
 
-export async function runOpen(
+export interface PreparedSession {
+  agentKind: AgentKind;
+  branch: string;
+  workCwd: string;
+  worktreePath: string | null;
+  launchArgv: string[];
+}
+
+/** Pure-ish helper: resolves the worktree (if requested) and builds the launch argv.
+ *  No DB writes, no Wave calls — safe to call from CLI or the HTTP handler. */
+export function prepareSession(
   branch: string,
-  opts: { worktree?: boolean; agent?: string; cwd?: string }
-): Promise<void> {
+  opts: { worktree?: boolean; agent?: string; cwd?: string },
+): PreparedSession {
   const agentKind = (opts.agent ?? "claude") as AgentKind;
   const baseCwd = resolve(opts.cwd ?? process.cwd());
   let workCwd = baseCwd;
@@ -24,10 +34,6 @@ export async function runOpen(
 
     // LIMITATION: if the worktree path exists but tracks a *different* branch than `branch`, we reuse it as-is without warning.
     if (!existsSync(worktreePath)) {
-      // Check if the branch already exists (e.g. from a previous interrupted run where
-      // the worktree path was deleted but the branch ref was kept). If it does, use
-      // `git worktree add <path> <branch>` (no -b) so we don't try to re-create it.
-      // If it doesn't exist, create it with -b.
       let branchExists = false;
       try {
         execFileSync("git", ["rev-parse", "--verify", branch], { cwd: repoRoot, stdio: "pipe" });
@@ -35,27 +41,15 @@ export async function runOpen(
       } catch {
         branchExists = false;
       }
-
-      if (branchExists) {
-        execFileSync("git", ["worktree", "add", worktreePath, branch], {
-          cwd: repoRoot,
-          stdio: "inherit",
-        });
-      } else {
-        execFileSync("git", ["worktree", "add", worktreePath, "-b", branch], {
-          cwd: repoRoot,
-          stdio: "inherit",
-        });
-      }
+      const args = branchExists
+        ? ["worktree", "add", worktreePath, branch]
+        : ["worktree", "add", worktreePath, "-b", branch];
+      execFileSync("git", args, { cwd: repoRoot, stdio: "inherit" });
     }
     workCwd = worktreePath;
   }
 
   const adapter = getAdapter(agentKind);
-
-  // Build the launch argv. For a brand-new session (no agent_session_id yet), resumeCommand
-  // returns just ["claude"] — we pass a minimal Session-shaped object so we can reuse the
-  // adapter's command-building logic without needing a separate launchCommand() API.
   const launchArgv = adapter.resumeCommand({
     id: "", agent_kind: agentKind, agent_session_id: null,
     workspace_id: null, wave_tab_id: null, wave_block_id: null,
@@ -65,13 +59,28 @@ export async function runOpen(
     created_at: 0, last_active_at: 0, transcript_path: null,
   });
 
+  return { agentKind, branch, workCwd, worktreePath, launchArgv };
+}
+
+export async function runOpen(
+  branch: string,
+  opts: { worktree?: boolean; agent?: string; cwd?: string },
+): Promise<void> {
+  const prep = prepareSession(branch, opts);
+
   const { id } = await callDaemon("registerPlannedSession", {
-    kind: agentKind, cwd: workCwd, branch, worktree_path: worktreePath,
-    launch_argv: launchArgv, display_name: branch,
+    kind: prep.agentKind,
+    cwd: prep.workCwd,
+    branch: prep.branch,
+    worktree_path: prep.worktreePath,
+    launch_argv: prep.launchArgv,
+    display_name: prep.branch,
   }) as { id: string };
 
   await wave.createBlock({
-    tabName: branch, cwd: workCwd, argv: launchArgv,
+    tabName: prep.branch,
+    cwd: prep.workCwd,
+    argv: prep.launchArgv,
     envExtra: { WAVECREST_SESSION_ID: id },
   });
 

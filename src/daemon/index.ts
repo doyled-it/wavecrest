@@ -7,7 +7,7 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer, serveUi } from "./http.ts";
-import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions } from "../db/queries.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { startUsagePoller } from "./usage-poller.ts";
@@ -92,13 +92,33 @@ function makeRpcHandler(db: Database) {
       const adapter = getAdapter(kind);
       const upd = adapter.hookEventToSessionUpdate(event, payload);
       if (!upd) return { ok: true };
+
+      // Filter #1: wavecrest's own usage-poller spawns claude in /tmp. Skip its hooks.
+      const cwd = (upd.cwd ?? "").replace(/^\/private\/tmp/, "/tmp");
+      if (cwd === "/tmp" || cwd.startsWith("/tmp/")) {
+        log.debug("hook: ignoring usage-poller meta-process", { cwd: upd.cwd, event });
+        return { ok: true };
+      }
+
       if (!upd.agent_session_id && event === "SessionStart") {
         log.warn("hook: SessionStart missing session_id, skipping adoption");
       }
 
       let session = upd.agent_session_id ? findSessionByAgentSessionId(db, upd.agent_session_id) : null;
+
       if (!session && upd.agent_session_id) {
-        // adopt wild session
+        // Merge #2: before creating a wild row, look for a recent unbound PLANNED row
+        // in the same cwd. If found, adopt it instead of duplicating.
+        const planned = findPlannedSessionForAdoption(db, upd.cwd ?? null, kind);
+        if (planned) {
+          bindPlannedSession(db, planned.id, upd.agent_session_id, upd.transcript_path ?? null, upd.status ?? "working", upd.last_active_at ?? Date.now());
+          session = findSessionByAgentSessionId(db, upd.agent_session_id);
+          log.info("hook: merged into planned session", { plannedId: planned.id, agentSessionId: upd.agent_session_id });
+        }
+      }
+
+      if (!session && upd.agent_session_id) {
+        // adopt wild session (no matching planned row found)
         const id = ulid();
         insertSession(db, {
           id, agent_kind: kind, agent_session_id: upd.agent_session_id,
@@ -328,6 +348,23 @@ function makeHttpHandler(db: Database) {
         return Response.json({ error: (e as Error).message }, { status: 500 });
       }
     }
+    // POST /api/sessions/:id/focus
+    const focusMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/focus$/);
+    if (focusMatch && req.method === "POST") {
+      try {
+        const id = focusMatch[1]!;
+        const row = db.query("SELECT wave_tab_id FROM sessions WHERE id = ?").get(id) as { wave_tab_id: string | null } | undefined;
+        if (!row) return Response.json({ error: "session not found" }, { status: 404 });
+        if (!row.wave_tab_id) return Response.json({ error: "session has no known Wave tab (was adopted via hook, not created by wavecrest)" }, { status: 400 });
+        const { wave } = await import("./wave-bridge.ts");
+        const result = await wave.focusTab(row.wave_tab_id);
+        if (!result.ok) return Response.json({ error: result.error }, { status: 502 });
+        return Response.json({ ok: true });
+      } catch (e: unknown) {
+        return Response.json({ error: (e as Error).message }, { status: 500 });
+      }
+    }
+
     if (sessionMatch && req.method === "DELETE") {
       try {
         const id = sessionMatch[1]!;
@@ -341,9 +378,73 @@ function makeHttpHandler(db: Database) {
       }
     }
 
+    if (url.pathname === "/api/theme" && req.method === "GET") {
+      const { getDashboardPalette, listThemes } = await import("./theme.ts");
+      return Response.json({ palette: getDashboardPalette(), available: listThemes() });
+    }
+
     if (url.pathname === "/api/auth-status" && req.method === "GET") {
       const { wave } = await import("./wave-bridge.ts");
       return Response.json({ hasJwt: wave.hasJwt() });
+    }
+
+    if (url.pathname === "/api/open/snapshot" && req.method === "POST") {
+      try {
+        const { wave } = await import("./wave-bridge.ts");
+        const r = await wave.snapshotTabs();
+        if (!r.ok) return Response.json({ error: r.error }, { status: 500 });
+        return Response.json({ tabIds: r.tabIds });
+      } catch (e: unknown) {
+        return Response.json({ error: (e as Error).message }, { status: 500 });
+      }
+    }
+
+    if (url.pathname === "/api/open/finalize" && req.method === "POST") {
+      try {
+        const body = await req.json() as {
+          branch?: unknown; agent?: unknown; cwd?: unknown; worktree?: unknown;
+          display_name?: unknown; beforeTabIds?: unknown;
+        };
+        const branch = typeof body.branch === "string" ? body.branch.trim() : "";
+        if (!branch) return Response.json({ error: "branch is required" }, { status: 400 });
+        if (!Array.isArray(body.beforeTabIds)) return Response.json({ error: "beforeTabIds required" }, { status: 400 });
+
+        const { prepareSession } = await import("../commands/open.ts");
+        const { wave } = await import("./wave-bridge.ts");
+        const prep = prepareSession(branch, {
+          agent: typeof body.agent === "string" ? body.agent : undefined,
+          cwd: typeof body.cwd === "string" ? body.cwd : undefined,
+          worktree: !!body.worktree,
+        });
+        const displayName = typeof body.display_name === "string" && body.display_name.trim()
+          ? body.display_name.trim()
+          : prep.branch;
+
+        const result = await wave.fillSessionTab({
+          displayName,
+          cwd: prep.workCwd,
+          argv: prep.launchArgv,
+          envExtra: {},
+          includeDashboard: true,
+          beforeTabIds: body.beforeTabIds as string[],
+        });
+        if (!result.ok) return Response.json({ error: result.error }, { status: 502 });
+
+        const id = ulid();
+        insertSession(db, {
+          id, agent_kind: prep.agentKind, agent_session_id: null,
+          workspace_id: null, wave_tab_id: result.tabId ?? null, wave_block_id: null,
+          cwd: prep.workCwd, repo_root: null, branch: prep.branch,
+          worktree_path: prep.worktreePath, launch_argv: prep.launchArgv,
+          display_name: displayName, status: "idle", auto_resume: true, pinned: false,
+          created_at: Date.now(), last_active_at: Date.now(), transcript_path: null,
+        });
+        broadcast("session", { id });
+
+        return Response.json({ id, tabId: result.tabId });
+      } catch (e: unknown) {
+        return Response.json({ error: (e as Error).message }, { status: 500 });
+      }
     }
 
     if (url.pathname === "/api/browse" && req.method === "GET") {
