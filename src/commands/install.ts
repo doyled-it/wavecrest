@@ -192,31 +192,49 @@ export async function runInstall(options: InstallOptions): Promise<void> {
   const widgetsPath = join(home, ".config", "waveterm", "widgets.json");
   const wavecrestHome = process.env.WAVECREST_HOME ?? join(home, ".wavecrest");
 
+  // ANSI symbols (no emojis)
+  const C = { reset: "\x1b[0m", bold: "\x1b[1m", green: "\x1b[32m", cyan: "\x1b[36m", dim: "\x1b[2m" };
+  const ok = `${C.green}✓${C.reset}`;
+  const info = `${C.cyan}!${C.reset}`;
+  const backedUp: string[] = [];
+  const written: string[] = [];
+
   // Step 1: Backup claude settings
   if (existsSync(settingsPath)) {
     copyFileSync(settingsPath, settingsBackup);
-    console.log(`Backed up ${settingsPath} → ${settingsBackup}`);
+    backedUp.push(settingsBackup);
   }
 
   // Step 2: Merge hooks
   installClaudeHooks(settingsPath, binPath);
-  console.log(`Merged wavecrest hooks into ${settingsPath}`);
+  written.push(`${ok} Claude hooks installed at ${settingsPath}` +
+    (backedUp.length ? ` ${C.dim}(existing backup at ${settingsBackup})${C.reset}` : ""));
 
   // Step 3: Write Wave widget
   installWaveWidget(widgetsPath);
-  console.log(`Wrote wavecrest widget to ${widgetsPath}`);
+  written.push(`${ok} Wave widget registered at ${widgetsPath}`);
 
   // Step 4: Launchd (darwin only)
   if (process.platform === "darwin") {
     const plistPath = join(home, "Library", "LaunchAgents", "com.doyled-it.wavecrest.plist");
     installLaunchd(binPath, plistPath, wavecrestHome);
-    console.log(`Installed and loaded LaunchAgent: ${plistPath}`);
+    written.push(`${ok} launchd agent installed at ${plistPath}`);
   } else {
-    console.warn(
-      "NOTE: Auto-start via launchd is only supported on macOS in phase 1.\n" +
-      "Start the daemon manually with: wavecrest daemon",
-    );
+    written.push(`${info} Auto-start via launchd is only supported on macOS in phase 1.\n     Start the daemon manually with: wavecrest daemon`);
   }
 
-  console.log("\nwavecrest install complete.");
+  console.log();
+  for (const line of written) console.log(line);
+  console.log(`
+${C.bold}Next steps:${C.reset}
+  1. Restart Wave Terminal so it picks up the new widget
+  2. In a ${C.bold}FRESH${C.reset} Wave terminal block (not inside tmux/screen), run:
+       wavecrest auth-set
+  3. Drag the wavecrest widget into a block to see your dashboard
+
+${C.bold}For optional features${C.reset} (one-click new-tab creation):
+  brew install cliclick
+  System Settings → Privacy & Security → Accessibility → add /opt/homebrew/bin/cliclick
+
+Run ${C.cyan}wavecrest doctor${C.reset} anytime to verify your setup.`);
 }

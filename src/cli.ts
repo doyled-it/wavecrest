@@ -7,6 +7,7 @@ import { runRestore } from "./commands/restore.ts";
 import { runInstall } from "./commands/install.ts";
 import { runUninstall } from "./commands/uninstall.ts";
 import { runAuthSet } from "./commands/auth.ts";
+import { runDoctor } from "./commands/doctor.ts";
 
 const cli = cac("wavecrest");
 cli.command("daemon", "Run the wavecrest daemon in the foreground").action(runDaemon);
@@ -26,6 +27,7 @@ cli.command("install", "Install hooks, widget, and login agent")
 cli.command("uninstall", "Remove hooks, widget, and login agent")
    .option("--purge", "Also delete ~/.wavecrest state")
    .action(runUninstall);
+cli.command("doctor", "Verify wavecrest installation and configuration").action(runDoctor);
 cli.help();
-cli.version("0.1.0");
+cli.version("0.1.2");
 cli.parse();
