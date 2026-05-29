@@ -258,32 +258,92 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 }
 
-// The /usage screen renders with ANSI cursor positioning, so when we strip ANSI we get
-// runs of characters with arbitrary whitespace (or none) between them. Permit \s* between
-// every token, and use prefix matches for the model names so "Sonet nly" typos from
-// render artifacts still resolve to "Sonnet". Bar character (█) precedes the percentage.
-const BUCKET_PATTERNS: Array<[RegExp, UsageSnapshot["scope"], string | null]> = [
-  [/Current\s*session[\s\S]{0,400}?(\d+)\s*%\s*used[\s\S]{0,400}?Resets\s*([^\n]+)/i, "session", null],
-  [/Current\s*week\s*\(\s*all\s*models?\s*\)[\s\S]{0,400}?(\d+)\s*%\s*used[\s\S]{0,400}?Resets\s*([^\n]+)/i, "weekly", null],
-  [/Current\s*week\s*\(\s*Son[a-zA-Z\s]*\)[\s\S]{0,400}?(\d+)\s*%\s*used[\s\S]{0,400}?Resets\s*([^\n]+)/i, "model", "Sonnet"],
-  [/Current\s*week\s*\(\s*Opus[a-zA-Z\s]*\)[\s\S]{0,400}?(\d+)\s*%\s*used[\s\S]{0,400}?Resets\s*([^\n]+)/i, "model", "Opus"],
+/** Bucket label matching is line-based and forgives cursor-render typos like
+ *  "Curretsession" (missing letter) by checking for "Current" + close-enough
+ *  follow-up text. */
+interface BucketSpec { scope: UsageSnapshot["scope"]; key: string | null; matchLine(line: string): boolean; }
+
+function startsLikeCurrent(line: string, after: RegExp): boolean {
+  // Trim, strip remaining cursor-positioning leftovers, accept "Current" with
+  // up to a couple of chars then the expected continuation. Cursor render
+  // artifacts can drop one or two letters anywhere in the header.
+  const t = line.trim();
+  if (!/^Cur/.test(t)) return false;
+  return after.test(t);
+}
+
+const BUCKETS: BucketSpec[] = [
+  { scope: "session", key: null,    matchLine: l => startsLikeCurrent(l, /sess/i)   && !/\(/.test(l) },
+  { scope: "weekly",  key: null,    matchLine: l => startsLikeCurrent(l, /week/i)   && /\(.*all/i.test(l) },
+  { scope: "model",   key: "Sonnet",matchLine: l => startsLikeCurrent(l, /week/i)   && /\(.*so/i.test(l) },
+  { scope: "model",   key: "Opus",  matchLine: l => startsLikeCurrent(l, /week/i)   && /\(.*op/i.test(l) },
 ];
+
+/** Split a string like "Apr 26 at 10am (America/Los_Angeles)  1% used"
+ *  into [resetsText, percent]. Returns [s, null] if no trailing "N% used". */
+function splitTrailingPercent(s: string): [string, number | null] {
+  const idx = s.lastIndexOf("% used");
+  if (idx < 0) return [s, null];
+  const before = s.slice(0, idx).trimEnd();
+  const wsIdx = before.search(/\s\S*$/);
+  if (wsIdx < 0) return [s, null];
+  const numStr = before.slice(wsIdx).trim();
+  const n = parseInt(numStr, 10);
+  if (!Number.isFinite(n)) return [s, null];
+  return [before.slice(0, wsIdx).trimEnd(), n];
+}
+
+function parseBucketAt(lines: string[], labelIdx: number): { percent: number; resets: string } | null {
+  let percent: number | null = null;
+  let resets: string | null = null;
+  // Scan up to 8 lines forward; stop at next bucket header.
+  for (let i = labelIdx + 1; i < Math.min(labelIdx + 9, lines.length); i++) {
+    const trimmed = lines[i]!.trim();
+    if (!trimmed) continue;
+    if (/^Cur/.test(trimmed) && /sess|week/i.test(trimmed)) break;
+
+    if (trimmed.startsWith("Resets ")) {
+      const rest = trimmed.slice("Resets ".length);
+      const [r, p] = splitTrailingPercent(rest);
+      if (resets === null) resets = r.trim();
+      if (percent === null && p !== null) percent = p;
+      continue;
+    }
+    // Legacy bar line: "████ 33% used"  (also handles compressed "33%used")
+    if (percent === null) {
+      const m = trimmed.match(/(\d+)\s*%\s*used\s*$/);
+      if (m) percent = parseInt(m[1]!, 10);
+    }
+  }
+  if (resets === null) return null;
+  return { percent: percent ?? 0, resets };
+}
 
 export function parseUsage(text: string): UsageSnapshot[] {
   const clean = stripAnsi(text);
+  const lines = clean.split("\n");
   const out: UsageSnapshot[] = [];
   const now = Date.now();
-  for (const [re, scope, key] of BUCKET_PATTERNS) {
-    const m = clean.match(re);
-    if (!m || m[1] === undefined || m[2] === undefined) continue;
+
+  for (const spec of BUCKETS) {
+    // Use rposition equivalent — find the LAST line matching this bucket so we
+    // pick the freshest render. Earlier renders may have been pushed apart by
+    // intervening output and lost their Resets line.
+    let labelIdx = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (spec.matchLine(lines[i]!)) { labelIdx = i; break; }
+    }
+    if (labelIdx < 0) continue;
+    const parsed = parseBucketAt(lines, labelIdx);
+    if (!parsed) continue;
     out.push({
       agent_kind: "claude",
       ts: now,
-      scope,
-      scope_key: key,
-      used: parseInt(m[1], 10),
+      scope: spec.scope,
+      scope_key: spec.key,
+      used: parsed.percent,
       limit: 100,
-      resets_at: parseResetTime(m[2]),
+      resets_at: parseResetTime(parsed.resets),
     });
   }
   return out;
