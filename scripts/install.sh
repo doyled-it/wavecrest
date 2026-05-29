@@ -34,7 +34,8 @@ die()  { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$1" >&2; exit 1; }
 UNAME_MS=$(uname -ms)
 case "$UNAME_MS" in
   "Darwin arm64") ASSET="wavecrest-darwin-arm64.tar.gz" ;;
-  *) die "unsupported platform: $UNAME_MS (wavecrest currently ships darwin-arm64 only; Linux/x64 in phase 2)" ;;
+  "Darwin x86_64") ASSET="wavecrest-darwin-x64.tar.gz" ;;
+  *) die "unsupported platform: $UNAME_MS (wavecrest currently ships darwin-arm64 and darwin-x64 only; Linux on the phase 2 roadmap)" ;;
 esac
 
 # ─── required tools ──────────────────────────────────────────────────────────

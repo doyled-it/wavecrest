@@ -1,7 +1,7 @@
 class Wavecrest < Formula
   desc "Wave Terminal companion for AI coding agents"
   homepage "https://github.com/doyled-it/wavecrest"
-  version "0.1.4"
+  version "0.1.5"
   license "MIT"
 
   on_macos do
