@@ -7,11 +7,11 @@ class Wavecrest < Formula
   on_macos do
     on_arm do
       url "https://github.com/doyled-it/wavecrest/releases/download/v#{version}/wavecrest-darwin-arm64.tar.gz"
-      sha256 "PLACEHOLDER_DARWIN_ARM64"
+      sha256 "4515f074fb93856a0a6de275de37fb74672d5ece5576fea907da6ceb5d1bd8c8"
     end
     on_intel do
       url "https://github.com/doyled-it/wavecrest/releases/download/v#{version}/wavecrest-darwin-x64.tar.gz"
-      sha256 "PLACEHOLDER_DARWIN_X64"
+      sha256 "7c2f4213906bb9a51bde466079137fbe9372232d74cd034a8d5e9693f5c5576c"
     end
   end
 
