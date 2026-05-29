@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   release:
-    # macos-14 is Apple Silicon (arm64) and free for public repos.
+    # macos-14 is Apple Silicon (arm64) and free for public repos. Cross-compiling
+    # to darwin-x64 with `bun build --target` works fine from arm64.
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -24,24 +25,26 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build bundle
-        run: bash scripts/build.sh
+      - name: Build bundles (arm64 + x64)
+        run: bash scripts/build.sh darwin-arm64 darwin-x64
 
-      - name: Verify architecture
+      - name: Verify architectures
         run: |
-          file dist/wavecrest-bundle/wavecrest
-          file dist/wavecrest-bundle/wavecrest | grep -q "arm64"
+          file dist/wavecrest-bundle-darwin-arm64/wavecrest | tee /tmp/arm.txt
+          file dist/wavecrest-bundle-darwin-x64/wavecrest   | tee /tmp/x64.txt
+          grep -q "arm64"  /tmp/arm.txt
+          grep -q "x86_64" /tmp/x64.txt
 
-      - name: Package tarball
+      - name: Package tarballs
         id: package
         run: |
           set -euo pipefail
-          TARBALL="wavecrest-darwin-arm64.tar.gz"
-          tar -czf "$TARBALL" -C dist/wavecrest-bundle .
-          shasum -a 256 "$TARBALL" | awk '{print $1"  "$2}' > "$TARBALL.sha256"
-          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
-          echo "checksum=$TARBALL.sha256" >> "$GITHUB_OUTPUT"
-          ls -lh "$TARBALL" "$TARBALL.sha256"
+          for ARCH in arm64 x64; do
+            TARBALL="wavecrest-darwin-${ARCH}.tar.gz"
+            tar -czf "$TARBALL" -C "dist/wavecrest-bundle-darwin-${ARCH}" .
+            shasum -a 256 "$TARBALL" | awk '{print $1"  "$2}' > "$TARBALL.sha256"
+            ls -lh "$TARBALL" "$TARBALL.sha256"
+          done
 
       - name: Extract tag annotation
         id: tag
@@ -49,7 +52,6 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          # Annotated tag body if present, otherwise empty
           BODY=$(git for-each-ref "refs/tags/$TAG" --format='%(contents)' || true)
           {
             echo "body<<__EOF__"
@@ -64,5 +66,7 @@ jobs:
           name: ${{ steps.tag.outputs.tag }}
           body: ${{ steps.tag.outputs.body }}
           files: |
-            ${{ steps.package.outputs.tarball }}
-            ${{ steps.package.outputs.checksum }}
+            wavecrest-darwin-arm64.tar.gz
+            wavecrest-darwin-arm64.tar.gz.sha256
+            wavecrest-darwin-x64.tar.gz
+            wavecrest-darwin-x64.tar.gz.sha256

@@ -3,34 +3,59 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Targets to produce. Override by passing names, e.g. `scripts/build.sh darwin-arm64`.
+if [ $# -gt 0 ]; then
+  TARGETS=("$@")
+else
+  TARGETS=(darwin-arm64 darwin-x64)
+fi
+
+# Build the UI bundle once; same assets ship in every per-arch bundle.
 bunx vite build
 mkdir -p dist
-bun build --compile --target=bun-darwin-arm64 \
-  --external node-pty \
-  src/cli.ts \
-  --outfile dist/wavecrest
 
-# Stage node-pty as a sibling so the daemon can dynamic-import the native addon
-# at runtime (bun --compile can't bundle .node files).
-rm -rf dist/node_modules
-mkdir -p dist/node_modules
-cp -R node_modules/node-pty dist/node_modules/node-pty
-# node-pty's spawn-helper must be executable; npm/bun install doesn't guarantee
-# the +x bit survives, and posix_spawnp returns EACCES (shown as "posix_spawnp
-# failed") if it isn't.
-chmod +x dist/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper
+for TARGET in "${TARGETS[@]}"; do
+  BIN="dist/wavecrest-${TARGET}"
+  BUNDLE="dist/wavecrest-bundle-${TARGET}"
 
-# Ad-hoc codesign with a stable identifier so macOS TCC treats every rebuild as
-# the same app. Without this, every rebuild looks like a brand-new binary to TCC
-# and the user re-grants Accessibility / Automation permissions on each build.
-codesign --force --sign - --identifier "com.doyled-it.wavecrest" dist/wavecrest 2>/dev/null || true
+  bun build --compile --target=bun-${TARGET} \
+    --external node-pty \
+    src/cli.ts \
+    --outfile "$BIN"
 
-# Place binary + ui/ + node_modules side-by-side in a bundle directory for the production layout.
-rm -rf dist/wavecrest-bundle
-mkdir -p dist/wavecrest-bundle
-cp dist/wavecrest dist/wavecrest-bundle/wavecrest
-cp -R dist/ui dist/wavecrest-bundle/ui
-cp -R dist/node_modules dist/wavecrest-bundle/node_modules
+  # Stage node-pty as a sibling so the daemon can dynamic-import the native addon
+  # at runtime (bun --compile can't bundle .node files).
+  NODE_MODULES_DIR="dist/node_modules-${TARGET}"
+  rm -rf "$NODE_MODULES_DIR"
+  mkdir -p "$NODE_MODULES_DIR"
+  cp -R node_modules/node-pty "$NODE_MODULES_DIR/node-pty"
+  # node-pty's spawn-helper must be executable; cp -R doesn't always preserve +x,
+  # and posix_spawnp returns EACCES (shown as "posix_spawnp failed") if it isn't.
+  if [ -e "$NODE_MODULES_DIR/node-pty/prebuilds/${TARGET}/spawn-helper" ]; then
+    chmod +x "$NODE_MODULES_DIR/node-pty/prebuilds/${TARGET}/spawn-helper"
+  fi
 
-echo "built: $ROOT/dist/wavecrest (single binary; usage-poller uses dist/node_modules/node-pty sibling)"
-echo "       $ROOT/dist/wavecrest-bundle/  (binary + ui/ + node_modules/ for production install)"
+  # Ad-hoc codesign with a stable identifier so macOS TCC treats every rebuild
+  # as the same app and doesn't re-prompt for Accessibility / Automation grants.
+  if [[ "$TARGET" == darwin-* ]]; then
+    codesign --force --sign - --identifier "com.doyled-it.wavecrest" "$BIN" 2>/dev/null || true
+  fi
+
+  # Bundle: binary + ui/ + node_modules/ side-by-side, production layout.
+  rm -rf "$BUNDLE"
+  mkdir -p "$BUNDLE"
+  cp "$BIN" "$BUNDLE/wavecrest"
+  cp -R dist/ui "$BUNDLE/ui"
+  cp -R "$NODE_MODULES_DIR" "$BUNDLE/node_modules"
+
+  echo "built: $ROOT/$BIN  -->  $ROOT/$BUNDLE/"
+done
+
+# Back-compat aliases for the local-dev path: the launchd plist and `wavecrest
+# install` reference dist/wavecrest, so keep an arm64 alias when we built one.
+if [ -e dist/wavecrest-darwin-arm64 ]; then
+  cp dist/wavecrest-darwin-arm64 dist/wavecrest
+  rm -rf dist/wavecrest-bundle dist/node_modules
+  cp -R dist/wavecrest-bundle-darwin-arm64 dist/wavecrest-bundle
+  cp -R dist/node_modules-darwin-arm64 dist/node_modules
+fi
