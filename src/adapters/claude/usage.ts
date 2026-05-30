@@ -59,14 +59,52 @@ interface MetaProcess {
 
 let meta: MetaProcess | null = null;
 
+// Track consecutive identical successful polls. claude's TUI sometimes serves
+// a cached /usage view that doesn't reflect fresh server data; if our parsed
+// result hasn't changed across STUCK_THRESHOLD polls, force-respawn the meta
+// process so it re-fetches from claude's API. Ported from agent-view.
+const STUCK_THRESHOLD = 3;
+let lastSnapshotHash = 0;
+let unchangedCount = 0;
+
+function hashSnapshots(snaps: UsageSnapshot[]): number {
+  // Cheap rolling hash over (scope, key, used, resets_text).
+  let h = 5381;
+  for (const s of snaps) {
+    const key = `${s.scope}|${s.scope_key ?? ""}|${s.used}|${s.resets_text ?? ""}`;
+    for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) | 0;
+  }
+  return h;
+}
+
 export async function claudeAccountUsage(): Promise<UsageSnapshot[]> {
   if (!meta) meta = await spawnMeta();
   try {
-    return await meta.poll();
+    const result = await meta.poll();
+
+    if (result.length > 0) {
+      const h = hashSnapshots(result);
+      if (h === lastSnapshotHash) {
+        unchangedCount++;
+        if (unchangedCount >= STUCK_THRESHOLD) {
+          log.info("usage: stuck for several polls, respawning meta", { polls: unchangedCount });
+          try { meta.kill(); } catch {}
+          meta = null;
+          unchangedCount = 0;
+          lastSnapshotHash = 0;
+        }
+      } else {
+        unchangedCount = 0;
+        lastSnapshotHash = h;
+      }
+    }
+    return result;
   } catch (e) {
     log.warn("usage poll failed, respawning", { error: String(e) });
-    meta.kill();
+    try { meta?.kill(); } catch {}
     meta = await spawnMeta();
+    unchangedCount = 0;
+    lastSnapshotHash = 0;
     return meta.poll();
   }
 }
@@ -226,14 +264,25 @@ async function spawnMeta(): Promise<MetaProcess> {
       drainFd();
       buf = "";
       writeToPty("/usage\r");
-      const deadline = Date.now() + 5000;
+      // Wait up to 12s for /usage to finish rendering. Claude shows "Loading
+      // usage data…" while it's still fetching — capturing during that window
+      // would pick up half-rendered or stale bar values. Treat the buffer as
+      // ready when (a) we got at least the session + weekly buckets and (b)
+      // the loading placeholder no longer trails the buffer.
+      const deadline = Date.now() + 12_000;
       while (Date.now() < deadline) {
-        await sleep(250);
+        await sleep(300);
         drainFd();
+        if (looksStillLoading(buf)) continue;
         const parsed = parseUsage(buf);
-        if (parsed.length >= 3) return parsed;
+        if (parsed.length >= 2) return parsed;
       }
       drainFd();
+      if (looksStillLoading(buf)) {
+        // Skip — the data would be wrong, and inserting it would knock the
+        // dashboard down to whatever the loading placeholder leaves behind.
+        return [];
+      }
       return parseUsage(buf);
     },
     kill() {
@@ -256,6 +305,14 @@ function sleep(ms: number): Promise<void> {
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+}
+
+/** True when the buffer's most recent screen still shows the "Loading…"
+ *  placeholder. Capturing during this state yields wrong bar percentages. */
+function looksStillLoading(buf: string): boolean {
+  const clean = stripAnsi(buf);
+  const tail = clean.slice(-2000);
+  return /loading\s*usage\s*data/i.test(tail) && !/Current\s*week/i.test(tail);
 }
 
 /** Bucket label matching is line-based and forgives cursor-render typos like

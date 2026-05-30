@@ -16,7 +16,15 @@ export function serveUi(uiDir: string): (req: Request) => Response | null {
     const type = file.endsWith(".html") ? "text/html"
                : file.endsWith(".js")   ? "text/javascript"
                : file.endsWith(".css")  ? "text/css" : "application/octet-stream";
-    return new Response(body, { headers: { "Content-Type": type } });
+    // index.html references hashed asset names, so the assets themselves can
+    // (and should) cache forever. But the HTML must NOT be cached or the
+    // browser keeps loading stale bundles after the daemon updates.
+    const cacheHeader = file.endsWith(".html")
+      ? "no-cache, no-store, must-revalidate"
+      : "public, max-age=31536000, immutable";
+    return new Response(body, {
+      headers: { "Content-Type": type, "Cache-Control": cacheHeader },
+    });
   };
 }
 
