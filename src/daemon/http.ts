@@ -1,6 +1,7 @@
 import { log } from "../lib/logger.ts";
 import { join, resolve } from "path";
 import { existsSync, readFileSync } from "fs";
+import { broadcastHeartbeat } from "./sse.ts";
 
 export function serveUi(uiDir: string): (req: Request) => Response | null {
   return (req) => {
@@ -31,9 +32,21 @@ export function startHttpServer(
   let port = desiredPort;
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
-      const server = Bun.serve({ port, hostname: "127.0.0.1", fetch: handler });
+      const server = Bun.serve({
+        port,
+        hostname: "127.0.0.1",
+        fetch: handler,
+        // Bun's default idleTimeout is 10s, which closes our SSE streams
+        // constantly. 255 is Bun's max (seconds). We also broadcast an SSE
+        // heartbeat comment every 15s so connections stay warm end-to-end.
+        idleTimeout: 255,
+      });
+      const heartbeat = setInterval(broadcastHeartbeat, 15_000);
       log.info("http: listening", { port });
-      return { stop: () => server.stop(), port };
+      return {
+        stop: () => { clearInterval(heartbeat); server.stop(); },
+        port,
+      };
     } catch (e: unknown) {
       const code = (e as NodeJS.ErrnoException)?.code;
       if (code === "EADDRINUSE") {

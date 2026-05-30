@@ -28,3 +28,14 @@ export function broadcast(event: string, data: unknown): void {
     try { c.controller.enqueue(payload); } catch { clients.delete(c.id); }
   }
 }
+
+const HEARTBEAT = enc.encode(": keepalive\n\n");
+
+/** Send a comment line to every connected client so idle SSE connections stay
+ *  warm. Comments (lines starting with ":") are part of the SSE protocol and
+ *  are ignored by EventSource on the browser side. */
+export function broadcastHeartbeat(): void {
+  for (const c of clients.values()) {
+    try { c.controller.enqueue(HEARTBEAT); } catch { clients.delete(c.id); }
+  }
+}
