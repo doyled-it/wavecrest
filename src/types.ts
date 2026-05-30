@@ -54,6 +54,8 @@ export interface UsageSnapshot {
   used: number;
   limit: number;
   resets_at: number | null;
+  /** Human-friendly reset string with timezone abbreviated (e.g. "3:20am PT"). */
+  resets_text?: string | null;
 }
 
 export interface SessionUpdate {

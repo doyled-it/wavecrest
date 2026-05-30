@@ -101,6 +101,8 @@ body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-a
 .rail { display:flex; flex-direction:column; gap:14px; align-items:center; }
 .rail .gauge { text-align:center; }
 .rail .gauge .label { font-size:9px; color:var(--muted); margin-top:3px; text-transform:uppercase; }
+.gauge-with-reset { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.gauge-reset { font-size:9px; color:var(--muted); font-family:ui-monospace,monospace; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; align-content:start; }
 .card { background:var(--card); padding:10px; border-radius:6px; border-left:3px solid var(--muted); }
 .card.working { border-left-color: var(--ok); }

@@ -109,8 +109,8 @@ export function getRollup(db: Database, sessionId: string): TokenRollup | null {
 }
 
 export function insertUsageSnapshot(db: Database, u: UsageSnapshot): void {
-  db.query("INSERT INTO usage_snapshots (agent_kind, ts, scope, scope_key, used, limit_, resets_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(u.agent_kind, u.ts, u.scope, u.scope_key ?? null, u.used, u.limit, u.resets_at ?? null);
+  db.query("INSERT INTO usage_snapshots (agent_kind, ts, scope, scope_key, used, limit_, resets_at, resets_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(u.agent_kind, u.ts, u.scope, u.scope_key ?? null, u.used, u.limit, u.resets_at ?? null, u.resets_text ?? null);
 }
 
 export function latestUsageSnapshots(db: Database, agentKind: string): UsageSnapshot[] {
@@ -122,7 +122,7 @@ export function latestUsageSnapshots(db: Database, agentKind: string): UsageSnap
     ) latest ON latest.maxid=u.id
     WHERE u.agent_kind=?
   `).all(agentKind, agentKind) as any[];
-  return rows.map(r => ({ ...r, limit: r.limit_ }));
+  return rows.map(r => ({ ...r, limit: r.limit_, resets_text: r.resets_text ?? null }));
 }
 
 // Note: 'crashed' sessions ARE returned — they're recoverable via re-launch.

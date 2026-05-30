@@ -302,8 +302,11 @@ function parseBucketAt(lines: string[], labelIdx: number): { percent: number; re
     if (!trimmed) continue;
     if (/^Cur/.test(trimmed) && /sess|week/i.test(trimmed)) break;
 
-    if (trimmed.startsWith("Resets ")) {
-      const rest = trimmed.slice("Resets ".length);
+    // Cursor-positioning render often compresses whitespace, so "Resets" and
+    // the following time may run together (e.g. "Resets10pm(America/...)").
+    const resetsLine = trimmed.match(/^Resets\s*(.+)$/i);
+    if (resetsLine) {
+      const rest = resetsLine[1]!;
       const [r, p] = splitTrailingPercent(rest);
       if (resets === null) resets = r.trim();
       if (percent === null && p !== null) percent = p;
@@ -343,12 +346,162 @@ export function parseUsage(text: string): UsageSnapshot[] {
       scope_key: spec.key,
       used: parsed.percent,
       limit: 100,
-      resets_at: parseResetTime(parsed.resets),
+      resets_at: parseResetTime(parsed.resets, now),
+      resets_text: abbreviateResets(parsed.resets),
     });
   }
   return out;
 }
 
-function parseResetTime(_s: string): number | null {
-  return null; // phase 1: leave null; future: parse human dates
+const TZ_ABBREV: Record<string, string> = {
+  "America/Los_Angeles": "PT",
+  "America/Denver": "MT",
+  "America/Chicago": "CT",
+  "America/New_York": "ET",
+  "Europe/London": "GMT",
+  "Europe/Paris": "CET",
+  "Europe/Berlin": "CET",
+  "Asia/Tokyo": "JST",
+  "Asia/Shanghai": "CST",
+  "Asia/Hong_Kong": "CST",
+  "UTC": "UTC",
+};
+
+/** Convert "12pm (America/Los_Angeles)" → "12pm PT".
+ *  Convert "Apr 23 at 6pm (America/New_York)" → "Apr 23 at 6pm ET".
+ *  Unknown IANA zones fall back to their last path component ("Europe/Madrid" → "Madrid"). */
+export function abbreviateResets(resets: string): string {
+  const m = resets.match(/^(.*?)\s*\(\s*([^)]+)\s*\)\s*$/);
+  if (!m) return resets;
+  const timePart = m[1]!.trim();
+  const tz = m[2]!.trim();
+  const abbr = TZ_ABBREV[tz] ?? tz.split("/").pop() ?? tz;
+  return `${timePart} ${abbr}`;
+}
+
+/** Parse a "Resets ..." string into an absolute epoch ms timestamp, best-effort.
+ *
+ *  Formats observed from claude /usage:
+ *    "12pm (America/Los_Angeles)"           — time-only, same day or next day
+ *    "3:20am (America/Los_Angeles)"         — same, with minutes
+ *    "Apr 23 at 12pm (America/Los_Angeles)" — explicit date
+ *    "May 29 at 2am (America/Los_Angeles)"  — same
+ *
+ *  Render artifacts compress whitespace ("May29at2am") so the regex tolerates
+ *  optional whitespace around the connector words.
+ *
+ *  Returns null if parsing fails. Time-only formats assume the time is the
+ *  next occurrence (today if still in future, else tomorrow). */
+export function parseResetTime(resets: string, nowMs: number): number | null {
+  const m = resets.match(/^(.*?)\s*\(\s*([^)]+)\s*\)\s*$/);
+  if (!m) return null;
+  const tz = m[2]!.trim();
+  const timeStr = m[1]!.trim();
+
+  // Format: "<month> <day> at <hour>[:<min>]<am|pm>"
+  let mo: number | null = null, dy: number | null = null, hr: number | null = null, mn = 0;
+  const dated = timeStr.match(/^([A-Za-z]+)\s*(\d+)\s*at\s*(\d+)(?::(\d+))?\s*(am|pm)$/i);
+  if (dated) {
+    mo = parseMonth(dated[1]!);
+    dy = parseInt(dated[2]!, 10);
+    hr = parseInt(dated[3]!, 10);
+    if (dated[4]) mn = parseInt(dated[4], 10);
+    hr = to24h(hr, dated[5]!);
+    if (mo === null) return null;
+  } else {
+    // Format: "<hour>[:<min>]<am|pm>"
+    const timeOnly = timeStr.match(/^(\d+)(?::(\d+))?\s*(am|pm)$/i);
+    if (!timeOnly) return null;
+    hr = parseInt(timeOnly[1]!, 10);
+    if (timeOnly[2]) mn = parseInt(timeOnly[2], 10);
+    hr = to24h(hr, timeOnly[3]!);
+  }
+
+  // Compute the wall-clock target in the user's reset timezone. We build a
+  // candidate Date in UTC then shift it by the timezone's offset.
+  const nowDate = new Date(nowMs);
+  const tzNow = nowInTimezone(tz, nowDate);
+  if (!tzNow) return null;
+
+  if (mo === null) {
+    // Time-only: today in tz; if it's already past, roll to tomorrow.
+    mo = tzNow.month;
+    dy = tzNow.day;
+    let candidate = makeUtcMillisAt(tzNow.year, mo, dy!, hr, mn, tz);
+    if (candidate <= nowMs) {
+      const next = new Date(candidate);
+      next.setUTCDate(next.getUTCDate() + 1);
+      candidate = next.getTime();
+    }
+    return candidate;
+  }
+  // Explicit month/day: assume current year unless that would be in the past.
+  let year = tzNow.year;
+  let candidate = makeUtcMillisAt(year, mo, dy!, hr, mn, tz);
+  if (candidate <= nowMs) {
+    candidate = makeUtcMillisAt(year + 1, mo, dy!, hr, mn, tz);
+  }
+  return candidate;
+}
+
+function to24h(h: number, ampm: string): number {
+  const isPm = /^pm$/i.test(ampm);
+  if (h === 12) return isPm ? 12 : 0;
+  return isPm ? h + 12 : h;
+}
+
+function parseMonth(name: string): number | null {
+  const months = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+  const idx = months.indexOf(name.slice(0, 3).toLowerCase());
+  return idx < 0 ? null : idx + 1;
+}
+
+/** Return year/month/day in the given IANA timezone as of `now`. */
+function nowInTimezone(tz: string, now: Date): { year: number; month: number; day: number } | null {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    const parts = fmt.formatToParts(now);
+    const get = (t: string) => parts.find(p => p.type === t)?.value;
+    const year = parseInt(get("year") ?? "", 10);
+    const month = parseInt(get("month") ?? "", 10);
+    const day = parseInt(get("day") ?? "", 10);
+    if (!year || !month || !day) return null;
+    return { year, month, day };
+  } catch {
+    return null;
+  }
+}
+
+/** Compose a UTC epoch ms for a given wall-clock moment in `tz`. We use
+ *  Intl.DateTimeFormat to discover how the tz interprets the moment, then
+ *  adjust to align. Works across DST transitions within a few seconds. */
+function makeUtcMillisAt(year: number, month: number, day: number, hr: number, mn: number, tz: string): number {
+  // First guess: the same wall-clock interpreted as UTC.
+  const guess = Date.UTC(year, month - 1, day, hr, mn, 0, 0);
+  // Compute what the tz thinks `guess` is, then adjust by the difference.
+  const tzWall = wallclockInTz(guess, tz);
+  if (!tzWall) return guess;
+  const tzGuess = Date.UTC(tzWall.year, tzWall.month - 1, tzWall.day, tzWall.hr, tzWall.mn, 0, 0);
+  const diff = guess - tzGuess;
+  return guess + diff;
+}
+
+function wallclockInTz(epochMs: number, tz: string): { year: number; month: number; day: number; hr: number; mn: number } | null {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+    const parts = fmt.formatToParts(new Date(epochMs));
+    const get = (t: string) => parts.find(p => p.type === t)?.value;
+    return {
+      year: parseInt(get("year") ?? "", 10),
+      month: parseInt(get("month") ?? "", 10),
+      day: parseInt(get("day") ?? "", 10),
+      hr: parseInt(get("hour") ?? "", 10),
+      mn: parseInt(get("minute") ?? "", 10),
+    };
+  } catch { return null; }
 }
