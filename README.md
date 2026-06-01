@@ -188,5 +188,5 @@ MIT. A `LICENSE` file will be added in a future release.
 ## Acknowledgements
 
 - [Wave Terminal](https://www.waveterm.dev/) — the host this companion is built for
-- [agent-view](https://github.com/wavetermdev/agent-view) — the prototype that inspired wavecrest
+- [agent-view](https://github.com/doyled-it/agent-view) — the prototype that inspired wavecrest
 - [codegraph](https://github.com/colbymchenry/codegraph) — powers the optional `query_repo` / `index_repo` MCP tools
