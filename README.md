@@ -86,6 +86,23 @@ The server speaks MCP over stdio and exposes these tools:
 | `pin_session(id, pinned)` | **Write.** Pin or unpin a session |
 | `delete_session(id)` | **Write.** Remove a session from the dashboard |
 | `focus_session(id)` | **Write.** Focus the session's Wave tab |
+| `query_repo(repo_path, question)` | Ask a codebase question; returns a markdown context bundle (requires [codegraph](https://github.com/colbymchenry/codegraph)) |
+| `index_repo(repo_path, force?)` | **Write.** Build a codegraph index in `<repo_path>/.codegraph/` so `query_repo` works |
+
+### Codebase Q&A (optional)
+
+`query_repo` and `index_repo` proxy to [`codegraph`](https://github.com/colbymchenry/codegraph),
+which is optional. Install it with `npm install -g @colbymchenry/codegraph` (or
+set `WAVECREST_CODEGRAPH_PATH` to a custom location). With it installed, an
+agent that loads wavecrest's MCP server can answer questions like:
+
+> user: *"what calls myFunction?"*
+> agent: `query_repo({ repo_path: "/Users/me/projects/foo", question: "what calls myFunction" })`
+> → markdown context bundle
+
+The first call against an un-indexed repo will fail with a hint to run
+`index_repo` first (which creates `<repo_path>/.codegraph/`). `wavecrest doctor`
+surfaces a warn-level check when codegraph isn't on PATH.
 
 `open_session` always passes `new_tab=false`: the existing
 snapshot-then-finalize path needs a user keystroke to create a new Wave tab,
