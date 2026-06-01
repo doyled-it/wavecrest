@@ -183,3 +183,88 @@ test("rowToSession throws with session id on malformed launch_argv", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("insertSample + getSubagentBreakdown groups by subagent_type with NULL as 'main'", async () => {
+  const { insertSample, getSubagentBreakdown } = await import("../../src/db/queries.ts");
+  const dir = mkdtempSync(join(tmpdir(), "wc-q-bd-"));
+  const db = openDb(join(dir, "state.db"));
+  try {
+    insertSession(db, makeSession({ id: "s1" }));
+    // 3 main + 2 general-purpose + 1 explore samples
+    const base = { session_id: "s1", input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
+    insertSample(db, { ...base, ts: 1, input_tokens: 100, subagent_type: null,              message_uuid: "u1" });
+    insertSample(db, { ...base, ts: 2, output_tokens: 50, subagent_type: null,              message_uuid: "u2" });
+    insertSample(db, { ...base, ts: 3, cache_read_tokens: 25, subagent_type: null,          message_uuid: "u3" });
+    insertSample(db, { ...base, ts: 4, output_tokens: 200, subagent_type: "general-purpose", message_uuid: "u4" });
+    insertSample(db, { ...base, ts: 5, output_tokens: 50,  subagent_type: "general-purpose", message_uuid: "u5" });
+    insertSample(db, { ...base, ts: 6, output_tokens: 10,  subagent_type: "Explore",         message_uuid: "u6" });
+
+    const slices = getSubagentBreakdown(db, "s1");
+    // Sorted desc by total_tokens.
+    expect(slices.map(s => s.subagent_type)).toEqual(["general-purpose", "main", "Explore"]);
+    expect(slices.find(s => s.subagent_type === "main")?.total_tokens).toBe(175);
+    expect(slices.find(s => s.subagent_type === "general-purpose")?.total_tokens).toBe(250);
+    expect(slices.find(s => s.subagent_type === "Explore")?.total_tokens).toBe(10);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("insertSample is idempotent on (session_id, message_uuid)", async () => {
+  const { insertSample, getSubagentBreakdown } = await import("../../src/db/queries.ts");
+  const dir = mkdtempSync(join(tmpdir(), "wc-q-idem-"));
+  const db = openDb(join(dir, "state.db"));
+  try {
+    insertSession(db, makeSession({ id: "s1" }));
+    const sample = { session_id: "s1", ts: 1, input_tokens: 100, output_tokens: 0,
+                     cache_read_tokens: 0, cache_write_tokens: 0, subagent_type: null, message_uuid: "u-dup" };
+    insertSample(db, sample);
+    insertSample(db, sample); // duplicate — INSERT OR IGNORE
+    insertSample(db, sample); // again
+
+    const slices = getSubagentBreakdown(db, "s1");
+    expect(slices[0]?.total_tokens).toBe(100); // not 300
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("getSparkline returns N buckets covering [min_ts, max_ts]", async () => {
+  const { insertSample, getSparkline } = await import("../../src/db/queries.ts");
+  const dir = mkdtempSync(join(tmpdir(), "wc-q-sl-"));
+  const db = openDb(join(dir, "state.db"));
+  try {
+    insertSession(db, makeSession({ id: "s1" }));
+    const base = { session_id: "s1", input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, subagent_type: null };
+    // Three samples spanning ts=100..200, each contributing 10 tokens.
+    insertSample(db, { ...base, ts: 100, output_tokens: 10, message_uuid: "u1" });
+    insertSample(db, { ...base, ts: 150, output_tokens: 10, message_uuid: "u2" });
+    insertSample(db, { ...base, ts: 200, output_tokens: 10, message_uuid: "u3" });
+
+    const buckets = getSparkline(db, "s1", 10);
+    expect(buckets.length).toBe(10);
+    // Sum of all buckets equals total tokens (30).
+    expect(buckets.reduce((a, b) => a + b, 0)).toBe(30);
+    // First bucket has ts=100, last bucket has ts=200.
+    expect(buckets[0]).toBe(10);
+    expect(buckets[9]).toBe(10);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("getSparkline returns [] when no samples exist", async () => {
+  const { getSparkline } = await import("../../src/db/queries.ts");
+  const dir = mkdtempSync(join(tmpdir(), "wc-q-sl-empty-"));
+  const db = openDb(join(dir, "state.db"));
+  try {
+    insertSession(db, makeSession({ id: "s-empty" }));
+    expect(getSparkline(db, "s-empty")).toEqual([]);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

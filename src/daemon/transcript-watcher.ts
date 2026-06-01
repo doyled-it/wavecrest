@@ -1,13 +1,59 @@
 import chokidar from "chokidar";
 import { stat, open } from "fs/promises";
 import type { Database } from "bun:sqlite";
-import { findSessionByAgentSessionId, upsertRollup } from "../db/queries.ts";
+import { findSessionByAgentSessionId, upsertRollup, insertSample } from "../db/queries.ts";
 import { log } from "../lib/logger.ts";
 import { broadcast } from "./sse.ts";
 
 interface Tailer {
   offset: number;
   sessionId: string | null;
+  // uuid → subagent_type ("main" or the value of input.subagent_type from
+  // Task/Agent tool_use blocks). Built incrementally as the transcript streams.
+  // Sidechain messages inherit from the nearest known ancestor by walking
+  // parentUuid.
+  uuidToSubagent: Map<string, string>;
+}
+
+// First subagent_type found in any Task/Agent tool_use block on the message.
+// Handles legacy "Task" and current "Agent" tool names.
+function firstSubagentType(message: Record<string, unknown> | undefined): string | null {
+  if (!message) return null;
+  const content = message.content;
+  if (!Array.isArray(content)) return null;
+  for (const c of content) {
+    if (!c || typeof c !== "object") continue;
+    const cb = c as Record<string, unknown>;
+    if (cb.type !== "tool_use") continue;
+    const name = String(cb.name ?? "");
+    if (name !== "Task" && name !== "Agent") continue;
+    const input = cb.input as Record<string, unknown> | undefined;
+    const sub = input?.subagent_type;
+    if (typeof sub === "string" && sub.length > 0) return sub;
+  }
+  return null;
+}
+
+// Resolve and cache this message's subagent_type. Strategy:
+//  - non-sidechain message dispatching an Agent → "<subagent_type>" (any descendant inherits)
+//  - non-sidechain message without dispatch       → "main"
+//  - sidechain message                            → inherit from parentUuid in map, fall back to "main"
+// Messages stream in topological order, so the parent is always recorded first.
+function attributeMessage(
+  uuid: string | undefined,
+  parentUuid: string | undefined,
+  isSidechain: boolean,
+  message: Record<string, unknown> | undefined,
+  map: Map<string, string>,
+): string {
+  let attr: string;
+  if (!isSidechain) {
+    attr = firstSubagentType(message) ?? "main";
+  } else {
+    attr = (parentUuid && map.get(parentUuid)) ?? "main";
+  }
+  if (uuid) map.set(uuid, attr);
+  return attr;
 }
 
 export interface Watcher {
@@ -27,7 +73,7 @@ export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
 
     let t = tailers.get(path);
     if (!t) {
-      t = { offset: 0, sessionId: null };
+      t = { offset: 0, sessionId: null, uuidToSubagent: new Map() };
       tailers.set(path, t);
     }
 
@@ -70,17 +116,48 @@ export function startTranscriptWatcher(db: Database, roots: string[]): Watcher {
 
         const message = entry.message as Record<string, unknown> | undefined;
         const usage = message?.usage as Record<string, unknown> | undefined;
+        const uuid = typeof entry.uuid === "string" ? entry.uuid : undefined;
+        const parentUuid = typeof entry.parentUuid === "string" ? entry.parentUuid : undefined;
+        const isSidechain = entry.isSidechain === true;
+
+        // Maintain attribution map for every entry (cheap), so deep-nested
+        // sidechain messages can inherit by parentUuid lookup.
+        const subagent = attributeMessage(uuid, parentUuid, isSidechain, message, t.uuidToSubagent);
 
         if (usage && t.sessionId && !stopped) {
+          const input = (usage.input_tokens as number) ?? 0;
+          const output = (usage.output_tokens as number) ?? 0;
+          const cacheRead = (usage.cache_read_input_tokens as number) ?? 0;
+          const cacheWrite = (usage.cache_creation_input_tokens as number) ?? 0;
+
           upsertRollup(db, {
             session_id: t.sessionId,
-            input_tokens: (usage.input_tokens as number) ?? 0,
-            output_tokens: (usage.output_tokens as number) ?? 0,
-            cache_read_tokens: (usage.cache_read_input_tokens as number) ?? 0,
-            cache_write_tokens: (usage.cache_creation_input_tokens as number) ?? 0,
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cacheRead,
+            cache_write_tokens: cacheWrite,
             cost_usd: 0,
             updated_at: Date.now(),
           });
+
+          if (uuid) {
+            // Prefer entry-level ISO timestamp; fall back to wall-clock now.
+            const tsRaw = entry.timestamp;
+            const ts = typeof tsRaw === "string"
+              ? (Date.parse(tsRaw) || Date.now())
+              : Date.now();
+            insertSample(db, {
+              session_id: t.sessionId,
+              ts,
+              input_tokens: input,
+              output_tokens: output,
+              cache_read_tokens: cacheRead,
+              cache_write_tokens: cacheWrite,
+              subagent_type: subagent === "main" ? null : subagent,
+              message_uuid: uuid,
+            });
+          }
+
           broadcast("rollup", { session_id: t.sessionId });
         }
       }

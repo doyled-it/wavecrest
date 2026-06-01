@@ -108,6 +108,74 @@ export function getRollup(db: Database, sessionId: string): TokenRollup | null {
   return r ?? null;
 }
 
+// ─── Per-message samples (subagent breakdown + sparkline) ───────────────────
+
+export interface TokenSample {
+  session_id: string;
+  ts: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  subagent_type: string | null;
+  message_uuid: string;
+}
+
+// INSERT OR IGNORE on (session_id, message_uuid) — re-reads of the same
+// transcript line never double-count this granular data.
+export function insertSample(db: Database, s: TokenSample): void {
+  db.query(`INSERT OR IGNORE INTO session_token_samples
+    (session_id, ts, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, subagent_type, message_uuid)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(s.session_id, s.ts, s.input_tokens, s.output_tokens, s.cache_read_tokens, s.cache_write_tokens, s.subagent_type, s.message_uuid);
+}
+
+export interface SubagentSlice {
+  subagent_type: string;
+  total_tokens: number;
+}
+
+// Returns slices sorted by total_tokens desc. NULL subagent_type rolls up as
+// "main" so the UI doesn't have to special-case it.
+export function getSubagentBreakdown(db: Database, sessionId: string): SubagentSlice[] {
+  const rows = db.query(`
+    SELECT
+      COALESCE(subagent_type, 'main') AS subagent_type,
+      SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS total_tokens
+    FROM session_token_samples
+    WHERE session_id = ?
+    GROUP BY COALESCE(subagent_type, 'main')
+    ORDER BY total_tokens DESC
+  `).all(sessionId) as any[];
+  return rows.map(r => ({ subagent_type: String(r.subagent_type), total_tokens: Number(r.total_tokens) }));
+}
+
+// Bucketed totals between first and last sample ts. Fixed number of buckets
+// so the UI can render a uniform sparkline regardless of session length.
+// Empty buckets are included as zeros so the line doesn't collapse.
+export function getSparkline(db: Database, sessionId: string, buckets = 40): number[] {
+  const range = db.query(`
+    SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts FROM session_token_samples WHERE session_id = ?
+  `).get(sessionId) as { min_ts: number | null; max_ts: number | null } | undefined;
+
+  if (!range || range.min_ts === null || range.max_ts === null) return [];
+
+  const span = Math.max(1, range.max_ts - range.min_ts);
+  const width = Math.max(1, Math.floor(span / buckets));
+  const out = new Array(buckets).fill(0) as number[];
+
+  const rows = db.query(`
+    SELECT ts, (input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS total
+    FROM session_token_samples WHERE session_id = ? ORDER BY ts ASC
+  `).all(sessionId) as { ts: number; total: number }[];
+
+  for (const r of rows) {
+    const idx = Math.min(buckets - 1, Math.floor((r.ts - range.min_ts) / width));
+    out[idx] += r.total;
+  }
+  return out;
+}
+
 export function insertUsageSnapshot(db: Database, u: UsageSnapshot): void {
   db.query("INSERT INTO usage_snapshots (agent_kind, ts, scope, scope_key, used, limit_, resets_at, resets_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(u.agent_kind, u.ts, u.scope, u.scope_key ?? null, u.used, u.limit, u.resets_at ?? null, u.resets_text ?? null);

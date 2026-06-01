@@ -2,11 +2,13 @@ import { Database } from "bun:sqlite";
 import init0001 from "./migrations/0001_init.sql" with { type: "text" };
 import init0002 from "./migrations/0002_event_status.sql" with { type: "text" };
 import init0003 from "./migrations/0003_usage_resets_text.sql" with { type: "text" };
+import init0004 from "./migrations/0004_token_samples.sql" with { type: "text" };
 
 const migrations = [
   { version: 1, sql: init0001 },
   { version: 2, sql: init0002 },
   { version: 3, sql: init0003 },
+  { version: 4, sql: init0004 },
 ];
 
 export function runMigrations(db: Database): void {
