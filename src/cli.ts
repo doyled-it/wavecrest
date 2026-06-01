@@ -1,4 +1,5 @@
 import { cac } from "cac";
+import pkg from "../package.json" with { type: "json" };
 import { runDaemon } from "./commands/daemon.ts";
 import { runHook } from "./commands/hook.ts";
 import { runStatus } from "./commands/status.ts";
@@ -31,5 +32,5 @@ cli.command("uninstall", "Remove hooks, widget, and login agent")
 cli.command("doctor", "Verify wavecrest installation and configuration").action(runDoctor);
 cli.command("mcp", "Run the wavecrest MCP server on stdio (spawned by MCP hosts like Claude Code, Codex, etc.)").action(runMcp);
 cli.help();
-cli.version("0.2.0");
+cli.version(pkg.version);
 cli.parse();

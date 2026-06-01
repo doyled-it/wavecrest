@@ -3,6 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import pkg from "../../package.json" with { type: "json" };
 import { createHttpDaemonClient } from "./daemon-client.ts";
 import { makeDispatcher } from "./tools.ts";
 
@@ -35,7 +36,7 @@ export function buildServer(opts?: { dispatcher?: ReturnType<typeof makeDispatch
     });
 
   const server = new McpServer(
-    { name: "wavecrest", version: "0.2.1" },
+    { name: "wavecrest", version: pkg.version },
     {
       instructions:
         "wavecrest MCP server. Exposes the wavecrest agent-session dashboard over MCP, plus a codegraph proxy for codebase Q&A. Read tools (list_sessions, get_session, get_usage, recent_events, query_repo) describe state or query a codebase. Write tools (open_session, rename_session, pin_session, delete_session, focus_session, index_repo) mutate the dashboard or filesystem.",
