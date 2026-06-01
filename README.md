@@ -14,6 +14,7 @@ Wave Terminal companion for AI coding agents — multi-session dashboard, usage 
 - Transcript watcher that surfaces the latest assistant message per session
 - Theme matching: dashboard adopts the Wave terminal theme automatically
 - Pinned sessions stay at the top of the dashboard across restarts
+- **Built-in MCP server** that exposes wavecrest's state (and actions) over the [Model Context Protocol](https://modelcontextprotocol.io) — any MCP host (Claude Code, Codex, etc.) can introspect and orchestrate your sessions
 
 ## Prerequisites
 
@@ -54,6 +55,50 @@ wavecrest auth-set        # captures the Wave env so the daemon can call wsh
 ```
 
 Run `wavecrest doctor` at any time to verify your setup.
+
+## Using the MCP server
+
+`wavecrest install` registers a `wavecrest` entry under `mcpServers` in
+`~/.claude/settings.json`, so Claude Code picks it up automatically. Other MCP
+hosts can add the same entry by hand:
+
+```json
+{
+  "mcpServers": {
+    "wavecrest": {
+      "command": "/absolute/path/to/wavecrest",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The server speaks MCP over stdio and exposes these tools:
+
+| Tool | Effect |
+| --- | --- |
+| `list_sessions(filter?)` | All active sessions (optionally filtered by `status` or `agent_kind`) |
+| `get_session(id)` | A single session, plus its rollup |
+| `get_usage()` | Latest agent-usage snapshots (Claude session/week limits) |
+| `recent_events(limit?, verbose?)` | Recent session-state transitions |
+| `open_session(branch, …)` | **Write.** Create a new agent session (in the currently-focused Wave tab) |
+| `rename_session(id, display_name)` | **Write.** Update a session's display name |
+| `pin_session(id, pinned)` | **Write.** Pin or unpin a session |
+| `delete_session(id)` | **Write.** Remove a session from the dashboard |
+| `focus_session(id)` | **Write.** Focus the session's Wave tab |
+
+`open_session` always passes `new_tab=false`: the existing
+snapshot-then-finalize path needs a user keystroke to create a new Wave tab,
+which isn't available when the call comes from an MCP agent.
+
+### Security
+
+The write tools let any MCP host that loads this server modify your wavecrest
+dashboard and spawn agent sessions. To disable them, remove the `wavecrest`
+entry from your MCP host's config (for Claude Code, edit
+`~/.claude/settings.json`), or run `wavecrest uninstall`. The server emits a
+one-time `[wavecrest mcp] first write-tool invoked` notice on stderr the first
+time a write tool fires.
 
 ## Configuration
 
