@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 import { GaugeRail } from "./components/GaugeRail.tsx";
-import { SessionGrid } from "./components/SessionGrid.tsx";
+import { SessionGrid, type EnrichedSession } from "./components/SessionGrid.tsx";
 import { NewSessionForm } from "./components/NewSessionForm.tsx";
 import { ActivityFeed } from "./components/ActivityFeed.tsx";
 import { useApi } from "./api.ts";
-import type { Session, TokenRollup, UsageSnapshot } from "../types.ts";
+import type { UsageSnapshot } from "../types.ts";
 
 interface Palette {
   bg: string; fg: string; card: string; muted: string;
@@ -12,7 +12,7 @@ interface Palette {
 }
 
 export function App() {
-  const sessions = useApi<Array<Session & { rollup: TokenRollup | null }>>("/api/sessions", []);
+  const sessions = useApi<EnrichedSession[]>("/api/sessions", []);
   const usage    = useApi<{ claude: UsageSnapshot[] }>("/api/usage", { claude: [] });
   const theme    = useApi<{ palette: Palette | null }>("/api/theme", { palette: null });
 

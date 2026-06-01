@@ -7,13 +7,14 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer, serveUi } from "./http.ts";
-import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession, listRecentEvents, setSessionPinned, getSession } from "../db/queries.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession, listRecentEvents, setSessionPinned, getSession, getSubagentBreakdown, getSparkline } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { startUsagePoller } from "./usage-poller.ts";
 import { ulid } from "../lib/ulid.ts";
 import { getAdapter } from "../adapters/registry.ts";
 import { reconcileManagedEntries } from "../commands/install.ts";
+import { getDiffStats } from "./diff-stats.ts";
 import type { AgentKind } from "../types.ts";
 import type { Database } from "bun:sqlite";
 
@@ -262,6 +263,9 @@ function makeHttpHandler(db: Database) {
       const sessions = listActiveSessions(db).map(s => ({
         ...s,
         rollup: getRollup(db, s.id),
+        subagent_breakdown: getSubagentBreakdown(db, s.id),
+        token_sparkline: getSparkline(db, s.id),
+        diff_stats: getDiffStats(s.id, s.worktree_path),
       }));
       return Response.json(sessions);
     }
@@ -275,6 +279,9 @@ function makeHttpHandler(db: Database) {
       return Response.json({
         ...s,
         rollup: getRollup(db, id),
+        subagent_breakdown: getSubagentBreakdown(db, id),
+        token_sparkline: getSparkline(db, id),
+        diff_stats: getDiffStats(id, s.worktree_path),
       });
     }
 

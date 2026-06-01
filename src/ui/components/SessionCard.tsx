@@ -1,5 +1,55 @@
 import { useEffect, useState } from "react";
-import type { Session, TokenRollup } from "../../types.ts";
+import type { Session, TokenRollup, SubagentSlice, DiffStats } from "../../types.ts";
+
+// Deterministic color from a string — same input always picks the same hue.
+// Used so subagent pills are visually stable across renders/sessions.
+function hashColor(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  const hue = ((h % 360) + 360) % 360;
+  return `hsl(${hue} 65% 55%)`;
+}
+
+function SubagentPills({ slices }: { slices: SubagentSlice[] }) {
+  if (!slices || slices.length === 0) return null;
+  const total = slices.reduce((acc, s) => acc + s.total_tokens, 0);
+  if (total === 0) return null;
+  // Drop slices that round to <1% to keep the row tidy.
+  const visible = slices.filter(s => (s.total_tokens / total) * 100 >= 1);
+  if (visible.length === 0) return null;
+  return (
+    <div className="subagent-pills" title="token share by subagent">
+      {visible.map(s => {
+        const pct = Math.round((s.total_tokens / total) * 100);
+        const color = s.subagent_type === "main" ? "var(--muted)" : hashColor(s.subagent_type);
+        return (
+          <span key={s.subagent_type} className="subagent-pill" style={{ borderColor: color, color }}>
+            {s.subagent_type} {pct}%
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// Tiny SVG sparkline. Fixed viewBox so CSS controls render size; the path
+// auto-scales to the data range. Zero-only data returns null (no visual).
+function Sparkline({ values, width = 120, height = 18 }: { values: number[]; width?: number; height?: number }) {
+  if (!values || values.length < 2) return null;
+  const max = Math.max(...values);
+  if (max === 0) return null;
+  const stepX = width / (values.length - 1);
+  const pts = values.map((v, i) => {
+    const x = i * stepX;
+    const y = height - (v / max) * (height - 2) - 1;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return (
+    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden>
+      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
 
 function fmtDuration(ms: number): string {
   if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
@@ -24,7 +74,19 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-export function SessionCard({ s, r }: { s: Session; r: TokenRollup | null }) {
+export function SessionCard({
+  s,
+  r,
+  breakdown,
+  sparkline,
+  diff,
+}: {
+  s: Session;
+  r: TokenRollup | null;
+  breakdown: SubagentSlice[];
+  sparkline: number[];
+  diff: DiffStats | null;
+}) {
   const turn = r ? (r.input_tokens + r.output_tokens) : 0;
   const cached = r ? r.cache_read_tokens : 0;
   const now = useNow();
@@ -130,7 +192,15 @@ export function SessionCard({ s, r }: { s: Session; r: TokenRollup | null }) {
         {s.branch ?? "—"} · {fmtTokens(turn)} tok
         {cached > 1000 ? <span title="cumulative cache reads"> · {fmtTokens(cached)} cached</span> : null}
         {(r?.cost_usd ?? 0) > 0 ? <span> · ${(r?.cost_usd ?? 0).toFixed(2)}</span> : null}
+        {diff && (diff.insertions > 0 || diff.deletions > 0) ? (
+          <span title={`vs merge-base ${diff.base} · ${diff.files} file${diff.files === 1 ? "" : "s"}`}>
+            {" · "}<span style={{ color: "var(--ok)" }}>+{diff.insertions}</span>
+            {" "}<span style={{ color: "var(--bad)" }}>−{diff.deletions}</span>
+          </span>
+        ) : null}
       </div>
+      <SubagentPills slices={breakdown} />
+      <Sparkline values={sparkline} />
     </div>
   );
 }

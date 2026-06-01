@@ -45,6 +45,18 @@ export interface TokenRollup {
   updated_at: number;
 }
 
+export interface SubagentSlice {
+  subagent_type: string;
+  total_tokens: number;
+}
+
+export interface DiffStats {
+  files: number;
+  insertions: number;
+  deletions: number;
+  base: string;
+}
+
 export interface UsageSnapshot {
   id?: number;
   agent_kind: AgentKind;
