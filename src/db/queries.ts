@@ -22,6 +22,17 @@ export function updateSessionStatus(db: Database, id: string, status: SessionSta
   db.query("UPDATE sessions SET status=?, last_active_at=? WHERE id=?").run(status, ts, id);
 }
 
+export function updateSessionGitContext(
+  db: Database,
+  id: string,
+  repoRoot: string | null,
+  branch: string | null,
+  worktreePath: string | null,
+): void {
+  db.query("UPDATE sessions SET repo_root=?, branch=?, worktree_path=? WHERE id=?")
+    .run(repoRoot, branch, worktreePath, id);
+}
+
 export function listActiveSessions(db: Database): Session[] {
   const rows = db.query(
     "SELECT * FROM sessions WHERE status != 'finished' ORDER BY pinned DESC, last_active_at DESC"

@@ -93,17 +93,14 @@ export function SessionCard({
   const sinceMs = Math.max(0, now - s.last_active_at);
   const sinceLabel = fmtDuration(sinceMs);
 
-  // Display fallback chain: explicit name → branch → cwd basename → id slice
-  function cwdBase(p: string | null | undefined): string | null {
+  // Display fallback chain: explicit name → repo basename → cwd basename → id slice.
+  // Branch shown below in meta row, so it's redundant in the title.
+  function basename(p: string | null | undefined): string | null {
     if (!p) return null;
     const parts = p.split("/").filter(Boolean);
-    // For ".worktrees/<branch>" patterns, show repo/worktree-name
-    if (parts.length >= 2 && parts[parts.length - 2] === ".worktrees") {
-      return parts[parts.length - 1] ?? null;
-    }
     return parts[parts.length - 1] ?? null;
   }
-  const displayName = s.display_name ?? s.branch ?? cwdBase(s.cwd) ?? s.id.slice(-8);
+  const displayName = s.display_name ?? basename(s.repo_root) ?? basename(s.cwd) ?? s.id.slice(-8);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(displayName);
@@ -189,6 +186,7 @@ export function SessionCard({
         </div>
       </div>
       <div className="meta">
+        {s.worktree_path ? <span title={`worktree: ${s.worktree_path}`}>⎇ </span> : null}
         {s.branch ?? "—"} · {fmtTokens(turn)} tok
         {cached > 1000 ? <span title="cumulative cache reads"> · {fmtTokens(cached)} cached</span> : null}
         {(r?.cost_usd ?? 0) > 0 ? <span> · ${(r?.cost_usd ?? 0).toFixed(2)}</span> : null}

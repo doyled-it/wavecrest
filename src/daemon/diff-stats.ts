@@ -63,32 +63,35 @@ function parseShortstat(line: string): { files: number; insertions: number; dele
   };
 }
 
-export function computeDiffStats(worktreePath: string | null): DiffStats | null {
-  if (!worktreePath || !existsSync(worktreePath)) return null;
+// Compute diff stats for any git directory — works for both linked worktrees
+// and ordinary checkouts. Returns null if cwd isn't a git repo, has no
+// default branch, or hasn't diverged from it.
+export function computeDiffStats(cwd: string | null): DiffStats | null {
+  if (!cwd || !existsSync(cwd)) return null;
 
   try {
-    const base = defaultBranch(worktreePath);
+    const base = defaultBranch(cwd);
     if (!base) return null;
 
-    const mergeBase = run(worktreePath, ["merge-base", "HEAD", base]).trim();
+    const mergeBase = run(cwd, ["merge-base", "HEAD", base]).trim();
     if (!mergeBase) return null;
 
     // Include uncommitted changes — what a PR-in-progress would actually show.
-    const shortstat = run(worktreePath, ["diff", "--shortstat", mergeBase]).trim();
+    const shortstat = run(cwd, ["diff", "--shortstat", mergeBase]).trim();
     const parsed = parseShortstat(shortstat);
     return { ...parsed, base: mergeBase.slice(0, 7) };
   } catch (e) {
-    log.debug("diff-stats: probe failed", { worktreePath, error: String(e) });
+    log.debug("diff-stats: probe failed", { cwd, error: String(e) });
     return null;
   }
 }
 
-export function getDiffStats(sessionId: string, worktreePath: string | null): DiffStats | null {
+export function getDiffStats(sessionId: string, cwd: string | null): DiffStats | null {
   const cached = cache.get(sessionId);
   const now = Date.now();
   if (cached && now - cached.ts < CACHE_TTL_MS) return cached.stats;
 
-  const stats = computeDiffStats(worktreePath);
+  const stats = computeDiffStats(cwd);
   cache.set(sessionId, { ts: now, stats });
   return stats;
 }

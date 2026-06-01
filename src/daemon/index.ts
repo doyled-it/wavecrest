@@ -7,7 +7,7 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer, serveUi } from "./http.ts";
-import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession, listRecentEvents, setSessionPinned, getSession, getSubagentBreakdown, getSparkline } from "../db/queries.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession, listRecentEvents, setSessionPinned, getSession, getSubagentBreakdown, getSparkline, updateSessionGitContext } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { startUsagePoller } from "./usage-poller.ts";
@@ -15,6 +15,7 @@ import { ulid } from "../lib/ulid.ts";
 import { getAdapter } from "../adapters/registry.ts";
 import { reconcileManagedEntries } from "../commands/install.ts";
 import { getDiffStats } from "./diff-stats.ts";
+import { detectGitContext } from "./git-detect.ts";
 import type { AgentKind } from "../types.ts";
 import type { Database } from "bun:sqlite";
 
@@ -60,6 +61,22 @@ export async function startDaemon(): Promise<Daemon> {
 
   const db = openDb(paths.db);
   log.info("daemon: db ready", { path: paths.db });
+
+  // Backfill git context for sessions missing repo_root or branch (pre-dates
+  // auto-detection, or was adopted before the repo_root field was tracked).
+  try {
+    let backfilled = 0;
+    for (const s of listActiveSessions(db)) {
+      if (s.repo_root !== null && s.branch !== null) continue;
+      const ctx = detectGitContext(s.worktree_path ?? s.cwd);
+      if (ctx.repo_root === null && ctx.branch === null) continue;
+      updateSessionGitContext(db, s.id, ctx.repo_root, ctx.branch, ctx.worktree_path ?? s.worktree_path);
+      backfilled++;
+    }
+    if (backfilled > 0) log.info("daemon: backfilled git context", { count: backfilled });
+  } catch (e) {
+    log.warn("daemon: git-context backfill failed (non-fatal)", { error: String(e) });
+  }
 
   const sock = startSockServer(paths.sock, makeRpcHandler(db));
   const http = startHttpServer(makeHttpHandler(db));
@@ -138,10 +155,12 @@ function makeRpcHandler(db: Database) {
       if (!session && upd.agent_session_id) {
         // adopt wild session (no matching planned row found)
         const id = ulid();
+        const cwd = upd.cwd ?? process.env.PWD ?? "/";
+        const gitCtx = detectGitContext(cwd);
         insertSession(db, {
           id, agent_kind: kind, agent_session_id: upd.agent_session_id,
           workspace_id: null, wave_tab_id: null, wave_block_id: null,
-          cwd: upd.cwd ?? process.env.PWD ?? "/", repo_root: null, branch: null, worktree_path: null,
+          cwd, repo_root: gitCtx.repo_root, branch: gitCtx.branch, worktree_path: gitCtx.worktree_path,
           launch_argv: ["claude"], display_name: null,
           status: upd.status ?? "working", auto_resume: false, pinned: false,
           created_at: Date.now(), last_active_at: upd.last_active_at ?? Date.now(),
@@ -265,7 +284,7 @@ function makeHttpHandler(db: Database) {
         rollup: getRollup(db, s.id),
         subagent_breakdown: getSubagentBreakdown(db, s.id),
         token_sparkline: getSparkline(db, s.id),
-        diff_stats: getDiffStats(s.id, s.worktree_path),
+        diff_stats: getDiffStats(s.id, s.worktree_path ?? s.cwd),
       }));
       return Response.json(sessions);
     }
