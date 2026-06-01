@@ -7,6 +7,22 @@ import { claudeInstallInstructions } from "../adapters/claude/hooks.ts";
 
 const HOOK_PREFIX = "wavecrest:";
 
+// Homebrew installs the real binary inside a versioned Cellar directory
+// (e.g. /opt/homebrew/Cellar/wavecrest/0.3.0/libexec/wavecrest) and exposes
+// it via a stable shim at /opt/homebrew/bin/<formula>, which brew repoints
+// on every upgrade. If process.execPath looks like the versioned Cellar
+// path, prefer the shim — that way managed entries (hooks, MCP server,
+// launchd plist) survive `brew upgrade` transparently. Otherwise return
+// the path unchanged (dev builds, curl-installer paths, user-provided
+// --bin-path).
+export function resolveStableBinPath(execPath: string): string {
+  const m = execPath.match(/^(.+)\/Cellar\/([^/]+)\/[^/]+\/(?:bin|libexec)\/[^/]+$/);
+  if (!m) return execPath;
+  const [, prefix, formula] = m;
+  const shim = `${prefix}/bin/${formula}`;
+  return existsSync(shim) ? shim : execPath;
+}
+
 // Write `next` to `path` only if it differs from what's already there. Returns
 // true if a write happened. Used so daemon-startup reconciliation doesn't churn
 // mtimes when there's nothing to change.
@@ -244,15 +260,16 @@ export function reconcileManagedEntries(): ReconcileResult | null {
   const execPath = process.execPath;
   const basename = execPath.split("/").pop() ?? "";
   if (basename === "bun" || basename === "node") return null;
+  const binPath = resolveStableBinPath(execPath);
 
   const home = homedir();
   const settingsPath = join(home, ".claude", "settings.json");
   const widgetsPath = join(home, ".config", "waveterm", "widgets.json");
 
   return {
-    binPath: execPath,
-    hooksWritten: installClaudeHooks(settingsPath, execPath),
-    mcpWritten: installMcpServer(settingsPath, execPath),
+    binPath,
+    hooksWritten: installClaudeHooks(settingsPath, binPath),
+    mcpWritten: installMcpServer(settingsPath, binPath),
     widgetWritten: installWaveWidget(widgetsPath),
   };
 }
@@ -281,7 +298,7 @@ export async function runInstall(options: InstallOptions): Promise<void> {
         "  ./dist/wavecrest install\n",
       );
     }
-    binPath = execPath;
+    binPath = resolveStableBinPath(execPath);
   }
 
   const settingsPath = join(home, ".claude", "settings.json");

@@ -197,3 +197,43 @@ test("removeWaveWidget preserves other widget entries", () => {
   expect(w.other).toBeDefined();
   expect(w.wavecrest).toBeUndefined();
 });
+
+test("resolveStableBinPath rewrites Cellar paths to the brew shim when shim exists", async () => {
+  const { resolveStableBinPath } = await import("../../src/commands/install.ts");
+  const { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync } = await import("fs");
+  const { tmpdir } = await import("os");
+  const { join } = await import("path");
+
+  // Build a fake brew prefix on disk so existsSync(shim) succeeds.
+  const prefix = mkdtempSync(join(tmpdir(), "wc-brew-"));
+  try {
+    mkdirSync(join(prefix, "bin"));
+    mkdirSync(join(prefix, "Cellar", "wavecrest", "0.3.0", "libexec"), { recursive: true });
+    writeFileSync(join(prefix, "bin", "wavecrest"), "");
+    chmodSync(join(prefix, "bin", "wavecrest"), 0o755);
+    const cellarPath = join(prefix, "Cellar", "wavecrest", "0.3.0", "libexec", "wavecrest");
+    writeFileSync(cellarPath, "");
+    expect(resolveStableBinPath(cellarPath)).toBe(join(prefix, "bin", "wavecrest"));
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+test("resolveStableBinPath leaves non-Cellar paths unchanged", async () => {
+  const { resolveStableBinPath } = await import("../../src/commands/install.ts");
+  for (const p of [
+    "/Users/me/dev/wavecrest/dist/wavecrest",
+    "/usr/local/bin/wavecrest",
+    "/Users/me/.bun/bin/bun",
+    "/some/other/path/wavecrest",
+  ]) {
+    expect(resolveStableBinPath(p)).toBe(p);
+  }
+});
+
+test("resolveStableBinPath falls back to execPath when the shim is missing", async () => {
+  const { resolveStableBinPath } = await import("../../src/commands/install.ts");
+  // /tmp/Cellar/... won't have a sibling /tmp/bin/<formula>, so no rewrite.
+  const fake = "/tmp/Cellar/wavecrest/0.3.0/libexec/wavecrest";
+  expect(resolveStableBinPath(fake)).toBe(fake);
+});
