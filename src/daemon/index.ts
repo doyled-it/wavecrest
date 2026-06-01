@@ -7,7 +7,7 @@ import { openDb } from "../db/index.ts";
 import { log } from "../lib/logger.ts";
 import { startSockServer } from "./sock.ts";
 import { startHttpServer, serveUi } from "./http.ts";
-import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession, listRecentEvents, setSessionPinned } from "../db/queries.ts";
+import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, updateSessionStatus, findSessionByAgentSessionId, insertEvent, listResumableSessions, findPlannedSessionForAdoption, bindPlannedSession, listRecentEvents, setSessionPinned, getSession } from "../db/queries.ts";
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { startUsagePoller } from "./usage-poller.ts";
@@ -247,6 +247,18 @@ function makeHttpHandler(db: Database) {
         rollup: getRollup(db, s.id),
       }));
       return Response.json(sessions);
+    }
+
+    // GET /api/sessions/:id — single-session detail (used by MCP get_session)
+    const sessionGetMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+    if (sessionGetMatch && req.method === "GET") {
+      const id = sessionGetMatch[1]!;
+      const s = getSession(db, id);
+      if (!s) return Response.json({ error: "session not found" }, { status: 404 });
+      return Response.json({
+        ...s,
+        rollup: getRollup(db, id),
+      });
     }
 
     if (url.pathname === "/api/usage" && req.method === "GET") {

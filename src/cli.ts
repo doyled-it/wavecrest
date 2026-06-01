@@ -8,6 +8,7 @@ import { runInstall } from "./commands/install.ts";
 import { runUninstall } from "./commands/uninstall.ts";
 import { runAuthSet } from "./commands/auth.ts";
 import { runDoctor } from "./commands/doctor.ts";
+import { runMcp } from "./commands/mcp.ts";
 
 const cli = cac("wavecrest");
 cli.command("daemon", "Run the wavecrest daemon in the foreground").action(runDaemon);
@@ -28,6 +29,7 @@ cli.command("uninstall", "Remove hooks, widget, and login agent")
    .option("--purge", "Also delete ~/.wavecrest state")
    .action(runUninstall);
 cli.command("doctor", "Verify wavecrest installation and configuration").action(runDoctor);
+cli.command("mcp", "Run the wavecrest MCP server on stdio (spawned by MCP hosts like Claude Code, Codex, etc.)").action(runMcp);
 cli.help();
-cli.version("0.1.11");
+cli.version("0.2.0");
 cli.parse();
