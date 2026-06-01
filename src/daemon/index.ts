@@ -13,6 +13,7 @@ import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { startUsagePoller } from "./usage-poller.ts";
 import { ulid } from "../lib/ulid.ts";
 import { getAdapter } from "../adapters/registry.ts";
+import { reconcileManagedEntries } from "../commands/install.ts";
 import type { AgentKind } from "../types.ts";
 import type { Database } from "bun:sqlite";
 
@@ -39,6 +40,22 @@ export async function startDaemon(): Promise<Daemon> {
   mkdirSync(paths.root, { recursive: true });
   ensureNotRunning();
   writeFileSync(paths.pid, String(process.pid));
+
+  try {
+    const r = reconcileManagedEntries();
+    if (r) {
+      const changed = [
+        r.hooksWritten && "hooks",
+        r.mcpWritten && "mcp",
+        r.widgetWritten && "widget",
+      ].filter(Boolean);
+      if (changed.length > 0) {
+        log.info("daemon: reconciled managed entries", { changed, binPath: r.binPath });
+      }
+    }
+  } catch (e) {
+    log.warn("daemon: reconcile failed (non-fatal)", { error: String(e) });
+  }
 
   const db = openDb(paths.db);
   log.info("daemon: db ready", { path: paths.db });

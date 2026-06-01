@@ -7,9 +7,26 @@ import { claudeInstallInstructions } from "../adapters/claude/hooks.ts";
 
 const HOOK_PREFIX = "wavecrest:";
 
+// Write `next` to `path` only if it differs from what's already there. Returns
+// true if a write happened. Used so daemon-startup reconciliation doesn't churn
+// mtimes when there's nothing to change.
+function writeIfChanged(path: string, next: string): boolean {
+  if (existsSync(path)) {
+    try {
+      if (readFileSync(path, "utf8") === next) return false;
+    } catch {
+      // Fall through to write.
+    }
+  }
+  const dir = path.split("/").slice(0, -1).join("/");
+  if (dir) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, next, "utf8");
+  return true;
+}
+
 // ─── Testable helpers (accept explicit paths) ─────────────────────────────────
 
-export function installClaudeHooks(settingsPath: string, binPath: string): void {
+export function installClaudeHooks(settingsPath: string, binPath: string): boolean {
   const hooks = claudeInstallInstructions(binPath).hooks;
 
   let settings: Record<string, any> = {};
@@ -34,10 +51,7 @@ export function installClaudeHooks(settingsPath: string, binPath: string): void 
 
   settings.hooks = existing;
 
-  const dir = settingsPath.split("/").slice(0, -1).join("/");
-  if (dir) mkdirSync(dir, { recursive: true });
-
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+  return writeIfChanged(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 }
 
 export function removeClaudeHooks(settingsPath: string): void {
@@ -74,7 +88,7 @@ export function removeClaudeHooks(settingsPath: string): void {
 const MCP_KEY = "wavecrest";
 const MCP_MANAGED_TAG = "_wavecrest_managed";
 
-export function installMcpServer(settingsPath: string, binPath: string): void {
+export function installMcpServer(settingsPath: string, binPath: string): boolean {
   let settings: Record<string, any> = {};
   if (existsSync(settingsPath)) {
     try {
@@ -92,10 +106,7 @@ export function installMcpServer(settingsPath: string, binPath: string): void {
   };
   settings.mcpServers = mcp;
 
-  const dir = settingsPath.split("/").slice(0, -1).join("/");
-  if (dir) mkdirSync(dir, { recursive: true });
-
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+  return writeIfChanged(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 }
 
 export function removeMcpServer(settingsPath: string): void {
@@ -121,7 +132,7 @@ export function removeMcpServer(settingsPath: string): void {
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
 }
 
-export function installWaveWidget(widgetsPath: string): void {
+export function installWaveWidget(widgetsPath: string): boolean {
   let widgets: Record<string, any> = {};
   if (existsSync(widgetsPath)) {
     try {
@@ -145,10 +156,7 @@ export function installWaveWidget(widgetsPath: string): void {
     },
   };
 
-  const dir = widgetsPath.split("/").slice(0, -1).join("/");
-  if (dir) mkdirSync(dir, { recursive: true });
-
-  writeFileSync(widgetsPath, JSON.stringify(widgets, null, 2) + "\n", "utf8");
+  return writeIfChanged(widgetsPath, JSON.stringify(widgets, null, 2) + "\n");
 }
 
 export function removeWaveWidget(widgetsPath: string): void {
@@ -212,6 +220,41 @@ export function removeLaunchd(plistPath: string): void {
     // Not loaded — fine
   }
   execSync(`rm -f "${plistPath}"`);
+}
+
+// ─── Daemon-startup reconciliation ───────────────────────────────────────────
+// Quietly re-applies the install* helpers for entries we own (hooks, MCP,
+// widget) so users who upgraded wavecrest without re-running `wavecrest
+// install` still get newly-added managed entries. Each helper is a no-op when
+// the merged result already matches the file, so this is cheap on every boot.
+// Does NOT touch launchd (we're already running) or back up settings.json
+// (we'd litter the directory).
+
+export interface ReconcileResult {
+  binPath: string;
+  hooksWritten: boolean;
+  mcpWritten: boolean;
+  widgetWritten: boolean;
+}
+
+export function reconcileManagedEntries(): ReconcileResult | null {
+  // Don't reconcile when wavecrest is running from `bun run`/`node` rather than
+  // the compiled binary — we'd plant the interpreter path into settings.json
+  // and break MCP for the next host that reads it.
+  const execPath = process.execPath;
+  const basename = execPath.split("/").pop() ?? "";
+  if (basename === "bun" || basename === "node") return null;
+
+  const home = homedir();
+  const settingsPath = join(home, ".claude", "settings.json");
+  const widgetsPath = join(home, ".config", "waveterm", "widgets.json");
+
+  return {
+    binPath: execPath,
+    hooksWritten: installClaudeHooks(settingsPath, execPath),
+    mcpWritten: installMcpServer(settingsPath, execPath),
+    widgetWritten: installWaveWidget(widgetsPath),
+  };
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
