@@ -35,10 +35,10 @@ export function buildServer(opts?: { dispatcher?: ReturnType<typeof makeDispatch
     });
 
   const server = new McpServer(
-    { name: "wavecrest", version: "0.2.0" },
+    { name: "wavecrest", version: "0.2.1" },
     {
       instructions:
-        "wavecrest MCP server. Exposes the wavecrest agent-session dashboard over MCP. Read tools (list_sessions, get_session, get_usage, recent_events) describe the state of agent sessions wavecrest is tracking. Write tools (open_session, rename_session, pin_session, delete_session, focus_session) act on the dashboard.",
+        "wavecrest MCP server. Exposes the wavecrest agent-session dashboard over MCP, plus a codegraph proxy for codebase Q&A. Read tools (list_sessions, get_session, get_usage, recent_events, query_repo) describe state or query a codebase. Write tools (open_session, rename_session, pin_session, delete_session, focus_session, index_repo) mutate the dashboard or filesystem.",
     },
   );
 
@@ -181,6 +181,38 @@ export function buildServer(opts?: { dispatcher?: ReturnType<typeof makeDispatch
     async (args) => {
       try {
         return jsonResult(await dispatcher.delete_session(args));
+      } catch (e) {
+        return errResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "query_repo",
+    {
+      description:
+        "Ask a question about a codebase. Requires the repo to be indexed first via `index_repo` or by running `codegraph init -i && codegraph index` manually. Returns a markdown context bundle suitable for agent consumption.",
+      inputSchema: { repo_path: z.string().min(1), question: z.string().min(1) },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await dispatcher.query_repo(args));
+      } catch (e) {
+        return errResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "index_repo",
+    {
+      description:
+        "Index a codebase with codegraph so it can be queried via `query_repo`. Idempotent unless `force` is true. Codegraph must be installed (npm install -g @colbymchenry/codegraph). Creates a `.codegraph/` directory in the repo.",
+      inputSchema: { repo_path: z.string().min(1), force: z.boolean().optional() },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await dispatcher.index_repo(args));
       } catch (e) {
         return errResult(e);
       }

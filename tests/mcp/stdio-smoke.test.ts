@@ -81,9 +81,11 @@ test("`wavecrest mcp` answers initialize and tools/list over stdio", async () =>
       "focus_session",
       "get_session",
       "get_usage",
+      "index_repo",
       "list_sessions",
       "open_session",
       "pin_session",
+      "query_repo",
       "recent_events",
       "rename_session",
     ]);

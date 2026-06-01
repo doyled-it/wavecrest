@@ -126,6 +126,7 @@ test("WRITE_TOOLS set lists the right tool names", () => {
   expect([...WRITE_TOOLS].sort()).toEqual([
     "delete_session",
     "focus_session",
+    "index_repo",
     "open_session",
     "pin_session",
     "rename_session",
