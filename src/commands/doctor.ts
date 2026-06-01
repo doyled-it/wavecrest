@@ -160,6 +160,13 @@ export async function runDoctor(): Promise<void> {
     checks.push({ name: "Claude hooks installed", status: "fail", detail: "no wavecrest-tagged hooks in settings.json", fix: "run `wavecrest install`" });
   }
 
+  // 6b. wavecrest MCP server registered
+  if (settings && settings.mcpServers && settings.mcpServers.wavecrest) {
+    checks.push({ name: "wavecrest MCP server registered", status: "pass", detail: `${settingsPath} (mcpServers.wavecrest)` });
+  } else {
+    checks.push({ name: "wavecrest MCP server registered", status: "warn", detail: `no wavecrest entry under mcpServers in ${settingsPath}`, fix: "run `wavecrest install` (or add the MCP entry manually for other MCP hosts)" });
+  }
+
   // 7. Wave widget installed
   const widgetsPath = join(home, ".config", "waveterm", "widgets.json");
   const widgets = readJson(widgetsPath);

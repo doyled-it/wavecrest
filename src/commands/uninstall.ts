@@ -2,7 +2,7 @@
 import { homedir } from "os";
 import { join } from "path";
 import { rmSync } from "fs";
-import { removeClaudeHooks, removeWaveWidget, removeLaunchd } from "./install.ts";
+import { removeClaudeHooks, removeWaveWidget, removeLaunchd, removeMcpServer } from "./install.ts";
 
 interface UninstallOptions {
   purge?: boolean;
@@ -18,6 +18,10 @@ export async function runUninstall(options: UninstallOptions): Promise<void> {
   // Step 1: Remove claude hooks
   removeClaudeHooks(settingsPath);
   console.log(`Removed wavecrest hooks from ${settingsPath}`);
+
+  // Step 1b: Remove MCP server entry
+  removeMcpServer(settingsPath);
+  console.log(`Removed wavecrest MCP server entry from ${settingsPath}`);
 
   // Step 2: Remove Wave widget
   removeWaveWidget(widgetsPath);

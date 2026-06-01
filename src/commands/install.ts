@@ -67,6 +67,60 @@ export function removeClaudeHooks(settingsPath: string): void {
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
 }
 
+// ─── MCP server registration in ~/.claude/settings.json ──────────────────────
+// Idempotent: keyed by entry name "wavecrest" inside mcpServers. We tag with
+// _wavecrest_managed so uninstall can confidently remove only entries we own.
+
+const MCP_KEY = "wavecrest";
+const MCP_MANAGED_TAG = "_wavecrest_managed";
+
+export function installMcpServer(settingsPath: string, binPath: string): void {
+  let settings: Record<string, any> = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    } catch {
+      settings = {};
+    }
+  }
+
+  const mcp: Record<string, any> = settings.mcpServers ?? {};
+  mcp[MCP_KEY] = {
+    command: binPath,
+    args: ["mcp"],
+    [MCP_MANAGED_TAG]: true,
+  };
+  settings.mcpServers = mcp;
+
+  const dir = settingsPath.split("/").slice(0, -1).join("/");
+  if (dir) mkdirSync(dir, { recursive: true });
+
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+}
+
+export function removeMcpServer(settingsPath: string): void {
+  if (!existsSync(settingsPath)) return;
+  let settings: Record<string, any>;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  } catch {
+    return;
+  }
+  const mcp: Record<string, any> = settings.mcpServers ?? {};
+  const entry = mcp[MCP_KEY];
+  // Only remove if we wrote it (managed tag present) — never blow away a
+  // user-customised entry they made themselves.
+  if (entry && entry[MCP_MANAGED_TAG]) {
+    delete mcp[MCP_KEY];
+  }
+  if (Object.keys(mcp).length === 0) {
+    delete settings.mcpServers;
+  } else {
+    settings.mcpServers = mcp;
+  }
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+}
+
 export function installWaveWidget(widgetsPath: string): void {
   let widgets: Record<string, any> = {};
   if (existsSync(widgetsPath)) {
@@ -214,6 +268,12 @@ export async function runInstall(options: InstallOptions): Promise<void> {
   installWaveWidget(widgetsPath);
   written.push(`${ok} Wave widget registered at ${widgetsPath}`);
 
+  // Step 3b: Register MCP server for Claude Code (and any other MCP host that
+  // reads ~/.claude/settings.json). External hosts (Codex, etc.) need manual
+  // config — see README.
+  installMcpServer(settingsPath, binPath);
+  written.push(`${ok} MCP server registered in ${settingsPath} (mcpServers.wavecrest)`);
+
   // Step 4: Launchd (darwin only)
   if (process.platform === "darwin") {
     const plistPath = join(home, "Library", "LaunchAgents", "com.doyled-it.wavecrest.plist");
@@ -231,6 +291,10 @@ ${C.bold}Next steps:${C.reset}
   2. In a ${C.bold}FRESH${C.reset} Wave terminal block (not inside tmux/screen), run:
        wavecrest auth-set
   3. Drag the wavecrest widget into a block to see your dashboard
+  4. Claude Code (and any MCP host reading ~/.claude/settings.json) can now
+     introspect and act on wavecrest via its MCP server.
+     Disable by removing the "wavecrest" entry under mcpServers, or run
+     ${C.cyan}wavecrest uninstall${C.reset}.
 
 ${C.bold}For optional features${C.reset} (one-click new-tab creation):
   brew install cliclick
