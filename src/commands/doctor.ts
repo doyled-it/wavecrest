@@ -190,6 +190,19 @@ export async function runDoctor(): Promise<void> {
     }
   }
 
+  // 8b. codegraph (optional — enables query_repo / index_repo MCP tools)
+  const codegraphPath = process.env.WAVECREST_CODEGRAPH_PATH || whichInteractive("codegraph");
+  if (codegraphPath && existsSync(codegraphPath)) {
+    checks.push({ name: "codegraph CLI (optional)", status: "pass", detail: codegraphPath });
+  } else {
+    checks.push({
+      name: "codegraph CLI (optional)",
+      status: "warn",
+      detail: "codegraph not found on interactive PATH",
+      fix: "npm install -g @colbymchenry/codegraph (enables query_repo / index_repo MCP tools)",
+    });
+  }
+
   // 9. cliclick
   const cliclickPath = whichInteractive("cliclick");
   if (cliclickPath) {
