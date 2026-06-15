@@ -40,6 +40,36 @@ export function listActiveSessions(db: Database): Session[] {
   return rows.map(rowToSession);
 }
 
+// ─── Session garbage collection ─────────────────────────────────────────────
+
+// Non-terminal statuses whose process is presumed dead once a session has gone
+// quiet for long enough (no hook fired). 'crashed' is intentionally excluded —
+// it's recoverable via re-launch (see listResumableSessions).
+const REAPABLE_STATUSES = ["working", "awaiting", "idle"] as const;
+
+/** Delete finished sessions whose last activity is older than `cutoffMs`.
+ *  Pinned sessions are spared regardless of age. FK ON DELETE CASCADE removes
+ *  the session's events, token rollup, and samples. Returns rows deleted. */
+export function deleteFinishedSessionsOlderThan(db: Database, cutoffMs: number): number {
+  const r = db.query(
+    "DELETE FROM sessions WHERE status = 'finished' AND pinned = 0 AND last_active_at < ?",
+  ).run(cutoffMs);
+  return r.changes;
+}
+
+/** Reap zombie sessions: non-terminal sessions that haven't fired a hook since
+ *  before `cutoffMs` are presumed dead (the process exited without a SessionEnd)
+ *  and marked 'finished' so they leave the dashboard and become eligible for
+ *  later deletion. Pinned sessions are never reaped. Returns rows updated. */
+export function reapStaleSessions(db: Database, cutoffMs: number): number {
+  const placeholders = REAPABLE_STATUSES.map(() => "?").join(",");
+  const r = db.query(
+    `UPDATE sessions SET status = 'finished'
+       WHERE status IN (${placeholders}) AND pinned = 0 AND last_active_at < ?`,
+  ).run(...REAPABLE_STATUSES, cutoffMs);
+  return r.changes;
+}
+
 export interface RecentEventRow {
   id: number;
   session_id: string;

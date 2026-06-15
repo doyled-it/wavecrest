@@ -43,7 +43,7 @@ describe("daemon RPC: hook + listSessions", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test("SessionStart hook creates a wild session with status=working", async () => {
+  test("SessionStart alone does NOT adopt a wild session; first tool use does", async () => {
     const pathsModule = JSON.stringify(join(PROJECT_ROOT, "src/lib/paths.ts"));
     const daemonModule = JSON.stringify(join(PROJECT_ROOT, "src/daemon/index.ts"));
 
@@ -75,17 +75,26 @@ describe("daemon RPC: hook + listSessions", () => {
 
       const daemon = await startDaemon();
 
-      // Send SessionStart hook
+      // SessionStart with no tool use must NOT create a row (flood guard).
       await rpcCall("hook", {
         kind: "claude",
         event: "SessionStart",
-        payload: { session_id: "test-1", transcript_path: "/tmp/x.jsonl" },
+        payload: { session_id: "test-1", transcript_path: "/tmp/x.jsonl", cwd: ${JSON.stringify(tmpDir)} },
       });
+      const afterStart = await rpcCall("listSessions", {});
+      const adoptedOnStart = afterStart.some(s => s.agent_session_id === "test-1");
 
-      // List sessions and verify
-      const sessions = await rpcCall("listSessions", {});
-      const s = sessions.find(s => s.agent_session_id === "test-1");
+      // First real activity (PreToolUse) adopts the wild session as 'working'.
+      await rpcCall("hook", {
+        kind: "claude",
+        event: "PreToolUse",
+        payload: { session_id: "test-1", transcript_path: "/tmp/x.jsonl", cwd: ${JSON.stringify(tmpDir)}, tool_name: "Bash" },
+      });
+      const afterTool = await rpcCall("listSessions", {});
+      const s = afterTool.find(s => s.agent_session_id === "test-1");
+
       const result = {
+        adoptedOnStart,
         found: !!s,
         status: s?.status,
         agent_session_id: s?.agent_session_id,
@@ -109,18 +118,19 @@ describe("daemon RPC: hook + listSessions", () => {
 
     expect(exitCode).toBe(0);
 
-    let result: { found: boolean; status: string; agent_session_id: string; auto_resume: boolean };
+    let result: { adoptedOnStart: boolean; found: boolean; status: string; agent_session_id: string; auto_resume: boolean };
     try {
       result = JSON.parse(stdout.trim());
     } catch {
       throw new Error(`subprocess stdout not JSON:\n${stdout}\nstderr:\n${stderr}`);
     }
 
+    expect(result.adoptedOnStart).toBe(false);
     expect(result.found).toBe(true);
     expect(result.agent_session_id).toBe("test-1");
     expect(result.status).toBe("working");
     expect(result.auto_resume).toBe(false);
-  });
+  }, 20000);
 
   test("Stop hook updates existing session status to idle", async () => {
     const pathsModule = JSON.stringify(join(PROJECT_ROOT, "src/lib/paths.ts"));
@@ -154,11 +164,11 @@ describe("daemon RPC: hook + listSessions", () => {
 
       const daemon = await startDaemon();
 
-      // Create session via SessionStart
+      // Adopt the session via a real tool-use event (SessionStart alone no longer adopts).
       await rpcCall("hook", {
         kind: "claude",
-        event: "SessionStart",
-        payload: { session_id: "test-2", transcript_path: "/tmp/y.jsonl" },
+        event: "PreToolUse",
+        payload: { session_id: "test-2", transcript_path: "/tmp/y.jsonl", tool_name: "Bash" },
       });
 
       // Send Stop hook for same session
@@ -205,5 +215,5 @@ describe("daemon RPC: hook + listSessions", () => {
     expect(result.status).toBe("idle");
     // Not re-inserted — exactly one session with this agent_session_id
     expect(result.count).toBe(1);
-  });
+  }, 20000);
 });

@@ -11,6 +11,7 @@ import { listActiveSessions, getRollup, latestUsageSnapshots, insertSession, upd
 import { attachSse, broadcast } from "./sse.ts";
 import { startTranscriptWatcher } from "./transcript-watcher.ts";
 import { startUsagePoller } from "./usage-poller.ts";
+import { startGc } from "./gc.ts";
 import { ulid } from "../lib/ulid.ts";
 import { getAdapter } from "../adapters/registry.ts";
 import { reconcileManagedEntries } from "../commands/install.ts";
@@ -85,11 +86,13 @@ export async function startDaemon(): Promise<Daemon> {
   const claudeRoot = join(homedir(), ".claude", "projects");
   const watcher = startTranscriptWatcher(db, [claudeRoot]);
   const poller = startUsagePoller(db);
+  const gc = startGc(db);
 
   log.info("daemon: ready", { port: http.port, sock: paths.sock });
 
   const shutdown = async () => {
     poller.stop();
+    gc.stop();
     await watcher.stop();
     sock.close();
     http.stop();
@@ -153,20 +156,29 @@ function makeRpcHandler(db: Database) {
       }
 
       if (!session && upd.agent_session_id) {
-        // adopt wild session (no matching planned row found)
-        const id = ulid();
-        const cwd = upd.cwd ?? process.env.PWD ?? "/";
-        const gitCtx = detectGitContext(cwd);
-        insertSession(db, {
-          id, agent_kind: kind, agent_session_id: upd.agent_session_id,
-          workspace_id: null, wave_tab_id: null, wave_block_id: null,
-          cwd, repo_root: gitCtx.repo_root, branch: gitCtx.branch, worktree_path: gitCtx.worktree_path,
-          launch_argv: ["claude"], display_name: null,
-          status: upd.status ?? "working", auto_resume: false, pinned: false,
-          created_at: Date.now(), last_active_at: upd.last_active_at ?? Date.now(),
-          transcript_path: upd.transcript_path ?? null,
-        });
-        session = findSessionByAgentSessionId(db, upd.agent_session_id);
+        // Adopt a wild session ONLY once it shows real activity (a tool-use hook).
+        // A session that merely starts and stops without using any tools — e.g. a
+        // headless `claude -p` one-shot or a scripted burst — is intentionally NOT
+        // adopted, so thousands of transient invocations can't flood the dashboard
+        // or the DB. Real interactive sessions fire PreToolUse within seconds.
+        if (event === "PreToolUse" || event === "PostToolUse") {
+          const id = ulid();
+          const cwd = upd.cwd ?? process.env.PWD ?? "/";
+          const gitCtx = detectGitContext(cwd);
+          insertSession(db, {
+            id, agent_kind: kind, agent_session_id: upd.agent_session_id,
+            workspace_id: null, wave_tab_id: null, wave_block_id: null,
+            cwd, repo_root: gitCtx.repo_root, branch: gitCtx.branch, worktree_path: gitCtx.worktree_path,
+            launch_argv: ["claude"], display_name: null,
+            status: upd.status ?? "working", auto_resume: false, pinned: false,
+            created_at: Date.now(), last_active_at: upd.last_active_at ?? Date.now(),
+            transcript_path: upd.transcript_path ?? null,
+          });
+          session = findSessionByAgentSessionId(db, upd.agent_session_id);
+        } else {
+          log.debug("hook: deferring wild adoption until first tool use", { event, agentSessionId: upd.agent_session_id });
+          return { ok: true };
+        }
       }
       if (session) {
         // Only mark status_after on the event if the hook actually flipped the
