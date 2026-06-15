@@ -10,6 +10,9 @@ import {
   getRollup,
   insertUsageSnapshot,
   latestUsageSnapshots,
+  deleteFinishedSessionsOlderThan,
+  reapStaleSessions,
+  listActiveSessions,
 } from "../../src/db/queries.ts";
 import type { Session, AgentKind } from "../../src/types.ts";
 
@@ -250,6 +253,70 @@ test("getSparkline returns N buckets covering [min_ts, max_ts]", async () => {
     // First bucket has ts=100, last bucket has ts=200.
     expect(buckets[0]).toBe(10);
     expect(buckets[9]).toBe(10);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("deleteFinishedSessionsOlderThan removes only aged-out, unpinned, finished sessions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wc-gc-del-"));
+  const db = openDb(join(dir, "state.db"));
+  try {
+    const NOW = 1_000_000_000_000;
+    const DAY = 24 * 60 * 60 * 1000;
+    // old + finished + unpinned  → deleted
+    insertSession(db, makeSession({ id: "old-finished", status: "finished", pinned: false, last_active_at: NOW - 10 * DAY }));
+    // recent + finished          → kept (within retention)
+    insertSession(db, makeSession({ id: "recent-finished", status: "finished", pinned: false, last_active_at: NOW - 1 * DAY }));
+    // old + finished + pinned     → kept (pinned is sacred)
+    insertSession(db, makeSession({ id: "old-finished-pinned", status: "finished", pinned: true, last_active_at: NOW - 10 * DAY }));
+    // old but not finished        → kept (deletion only targets finished)
+    insertSession(db, makeSession({ id: "old-idle", status: "idle", pinned: false, last_active_at: NOW - 10 * DAY }));
+
+    const cutoff = NOW - 7 * DAY;
+    const removed = deleteFinishedSessionsOlderThan(db, cutoff);
+
+    expect(removed).toBe(1);
+    expect(getSession(db, "old-finished")).toBeNull();
+    expect(getSession(db, "recent-finished")).not.toBeNull();
+    expect(getSession(db, "old-finished-pinned")).not.toBeNull();
+    expect(getSession(db, "old-idle")).not.toBeNull();
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("reapStaleSessions marks long-inactive non-terminal sessions finished, sparing pinned and fresh", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wc-gc-reap-"));
+  const db = openDb(join(dir, "state.db"));
+  try {
+    const NOW = 1_000_000_000_000;
+    const HOUR = 60 * 60 * 1000;
+    insertSession(db, makeSession({ id: "stale-working", status: "working", pinned: false, last_active_at: NOW - 48 * HOUR }));
+    insertSession(db, makeSession({ id: "stale-idle",    status: "idle",    pinned: false, last_active_at: NOW - 48 * HOUR }));
+    insertSession(db, makeSession({ id: "stale-awaiting",status: "awaiting",pinned: false, last_active_at: NOW - 48 * HOUR }));
+    // fresh activity → spared
+    insertSession(db, makeSession({ id: "fresh-working", status: "working", pinned: false, last_active_at: NOW - 1 * HOUR }));
+    // pinned → spared even when stale
+    insertSession(db, makeSession({ id: "stale-pinned",  status: "working", pinned: true,  last_active_at: NOW - 48 * HOUR }));
+    // crashed is resumable → not reaped
+    insertSession(db, makeSession({ id: "stale-crashed", status: "crashed", pinned: false, last_active_at: NOW - 48 * HOUR }));
+
+    const cutoff = NOW - 24 * HOUR;
+    const reaped = reapStaleSessions(db, cutoff);
+
+    expect(reaped).toBe(3);
+    expect(getSession(db, "stale-working")!.status).toBe("finished");
+    expect(getSession(db, "stale-idle")!.status).toBe("finished");
+    expect(getSession(db, "stale-awaiting")!.status).toBe("finished");
+    expect(getSession(db, "fresh-working")!.status).toBe("working");
+    expect(getSession(db, "stale-pinned")!.status).toBe("working");
+    expect(getSession(db, "stale-crashed")!.status).toBe("crashed");
+    // reaped sessions leave the active dashboard view
+    const active = listActiveSessions(db).map(s => s.id);
+    expect(active).not.toContain("stale-working");
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });
