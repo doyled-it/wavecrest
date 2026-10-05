@@ -1,6 +1,6 @@
 # wavecrest
 
-Wave Terminal companion for AI coding agents — multi-session dashboard, live usage gauges, subagent attribution, per-session token sparklines, worktree-aware diff stats, and an MCP server that exposes the dashboard to any agent that speaks MCP.
+Wave Terminal companion for AI coding agents: multi-session dashboard, live usage gauges, subagent attribution, per-session token sparklines, worktree-aware diff stats, and an MCP server that exposes the dashboard to any agent that speaks MCP.
 
 ![dashboard screenshot](docs/screenshot.png)
 
@@ -18,17 +18,17 @@ Each card on the dashboard shows, for every active Claude Code session:
 
 Above the cards, three gauges track Claude's session / weekly / per-model usage (sourced from `claude /usage`), with countdown labels until reset.
 
-Sessions are sorted **pinned first, then alphabetical** by visible name — multiple sessions on the same repo cluster together automatically.
+Sessions are sorted **pinned first, then alphabetical** by visible name. Multiple sessions on the same repo cluster together automatically.
 
 ## Features
 
-- Auto-adopts any `claude` session that fires the standard hooks — no special launcher required
+- Auto-adopts any `claude` session that fires the standard hooks, no special launcher required
 - Persists session state in SQLite under `~/.wavecrest/` and resumes across reboots
 - Live updates via Server-Sent Events with 15s heartbeats (no stale dashboards)
 - Per-message token sampling with subagent attribution via Task/Agent tool-use tracking
-- Daemon self-heals its managed settings entries (hooks, MCP server, Wave widget) on every boot, so `brew upgrade` "just works" — no need to re-run `wavecrest install`
+- Daemon self-heals its managed settings entries (hooks, MCP server, Wave widget) on every boot, so `brew upgrade` "just works", no need to re-run `wavecrest install`
 - Theme-matching: the dashboard adopts your Wave theme automatically
-- Built-in MCP server exposing read and write tools over [Model Context Protocol](https://modelcontextprotocol.io) — any MCP host (Claude Code, Codex, etc.) can introspect and act on the dashboard
+- Built-in MCP server exposing read and write tools over [Model Context Protocol](https://modelcontextprotocol.io). Any MCP host (Claude Code, Codex, etc.) can introspect and act on the dashboard
 - Optional **codebase Q&A** via `query_repo` / `index_repo` proxying to [codegraph](https://github.com/colbymchenry/codegraph)
 
 ## Prerequisites
@@ -36,7 +36,7 @@ Sessions are sorted **pinned first, then alphabetical** by visible name — mult
 - macOS on Apple Silicon or Intel (Linux is on the phase 2 roadmap)
 - [Wave Terminal](https://www.waveterm.dev/) installed
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and on your PATH
-- Optional: `cliclick` for one-keystroke new-tab creation (`brew install cliclick`) — gates one-click "+ new session" from the dashboard; everything else works without it
+- Optional: `cliclick` for one-keystroke new-tab creation (`brew install cliclick`), which gates one-click "+ new session" from the dashboard; everything else works without it
 
 ## Install
 
@@ -69,7 +69,7 @@ wavecrest auth-set                        # captures the Wave env so the daemon 
 # Restart Wave Terminal, then drag the "wavecrest" widget into a block.
 ```
 
-Run `wavecrest doctor` at any time to verify your setup — it lists every managed entry and points at the exact fix for anything broken.
+Run `wavecrest doctor` at any time to verify your setup. It lists every managed entry and points at the exact fix for anything broken.
 
 ## MCP server
 
@@ -120,18 +120,18 @@ The write tools let any MCP host that loads this server modify your dashboard an
 
 State lives under `~/.wavecrest/`:
 
-- `state.db` — SQLite database of sessions, events, usage snapshots, per-message token samples
-- `wave-env.json` — captured Wave env (JWT, TABID, interactive PATH, agent paths)
-- `daemon.log` — daemon stdout/stderr
-- `port` / `wavecrest.pid` — runtime metadata
+- `state.db`: SQLite database of sessions, events, usage snapshots, per-message token samples
+- `wave-env.json`: captured Wave env (JWT, TABID, interactive PATH, agent paths)
+- `daemon.log`: daemon stdout/stderr
+- `port` / `wavecrest.pid`: runtime metadata
 
 Environment variables:
 
-- `WAVECREST_HOME` — override the state directory (default `~/.wavecrest`)
-- `WAVECREST_LOG=debug` — verbose logging
-- `WAVECREST_UI_DIR` — point the daemon at a development UI build
-- `WAVECREST_WSH_PATH` — override the autodetected `wsh` location
-- `WAVECREST_CODEGRAPH_PATH` — override the codegraph CLI path
+- `WAVECREST_HOME`: override the state directory (default `~/.wavecrest`)
+- `WAVECREST_LOG=debug`: verbose logging
+- `WAVECREST_UI_DIR`: point the daemon at a development UI build
+- `WAVECREST_WSH_PATH`: override the autodetected `wsh` location
+- `WAVECREST_CODEGRAPH_PATH`: override the codegraph CLI path
 
 The HTTP server listens on `127.0.0.1:17321` and auto-increments if the port is busy; the chosen port is written to `~/.wavecrest/port`.
 
@@ -141,7 +141,7 @@ The HTTP server listens on `127.0.0.1:17321` and auto-increments if the port is 
 brew upgrade wavecrest
 ```
 
-The new binary replaces itself in place. On its next boot the daemon **reconciles its managed settings entries** (hooks, MCP server, Wave widget) against the current binary path — no need to rerun `wavecrest install`. If anything is already correct, nothing is written.
+The new binary replaces itself in place. On its next boot the daemon **reconciles its managed settings entries** (hooks, MCP server, Wave widget) against the current binary path. No need to rerun `wavecrest install`. If anything is already correct, nothing is written.
 
 ## Uninstall
 
@@ -152,7 +152,7 @@ wavecrest uninstall --purge   # also deletes ~/.wavecrest state
 
 ## Troubleshooting
 
-Run `wavecrest doctor` first — it enumerates every check with a specific fix.
+Run `wavecrest doctor` first. It enumerates every check with a specific fix.
 
 - **Dashboard widget doesn't appear.** Restart Wave Terminal so it picks up the new entry in `~/.config/waveterm/widgets.json`.
 - **Session created but block creation failed.** The captured Wave env has expired. Open a fresh Wave terminal block and rerun `wavecrest auth-set`.
@@ -165,9 +165,9 @@ Run `wavecrest doctor` first — it enumerates every check with a specific fix.
 
 A single Bun-compiled binary plays three roles:
 
-- **Daemon** — long-lived HTTP + SSE + Unix socket server. Owns the SQLite database, tails Claude Code transcripts, polls `claude /usage`, and serves the dashboard.
-- **CLI** — one-shot commands and Claude Code hook entrypoints (`wavecrest hook <event>` is what the hook config invokes).
-- **MCP server** — stdio MCP server spawned by hosts like Claude Code.
+- **Daemon**: long-lived HTTP + SSE + Unix socket server. Owns the SQLite database, tails Claude Code transcripts, polls `claude /usage`, and serves the dashboard.
+- **CLI**: one-shot commands and Claude Code hook entrypoints (`wavecrest hook <event>` is what the hook config invokes).
+- **MCP server**: stdio MCP server spawned by hosts like Claude Code.
 
 State persists in SQLite under `~/.wavecrest/`. Wave integration goes through `wsh` for block/tab creation and through the standard Claude Code hook contract for event ingestion. See `docs/superpowers/specs/2026-05-22-wavecrest-design.md` for the full design.
 
@@ -175,7 +175,7 @@ State persists in SQLite under `~/.wavecrest/`. Wave integration goes through `w
 
 Active development. Single-binary distribution via Homebrew, GitHub Releases, and a curl installer all work today.
 
-The cleanest tab-creation experience requires the still-pending Wave PR [wavetermdev/waveterm#3333](https://github.com/wavetermdev/waveterm/pull/3333) (`wsh tab create/rename/focus`). Until that lands, wavecrest falls back to a one-keystroke modal (or `cliclick` if installed) for new-tab creation. Everything else — adoption, gauges, MCP, subagent attribution, sparklines, diff stats — works without it.
+The cleanest tab-creation experience requires the still-pending Wave PR [wavetermdev/waveterm#3333](https://github.com/wavetermdev/waveterm/pull/3333) (`wsh tab create/rename/focus`). Until that lands, wavecrest falls back to a one-keystroke modal (or `cliclick` if installed) for new-tab creation. Everything else (adoption, gauges, MCP, subagent attribution, sparklines, diff stats) works without it.
 
 ## Contributing
 
@@ -187,6 +187,6 @@ MIT. A `LICENSE` file will be added in a future release.
 
 ## Acknowledgements
 
-- [Wave Terminal](https://www.waveterm.dev/) — the host this companion is built for
-- [agent-view](https://github.com/doyled-it/agent-view) — the prototype that inspired wavecrest
-- [codegraph](https://github.com/colbymchenry/codegraph) — powers the optional `query_repo` / `index_repo` MCP tools
+- [Wave Terminal](https://www.waveterm.dev/): the host this companion is built for
+- [agent-view](https://github.com/doyled-it/agent-view): the prototype that inspired wavecrest
+- [codegraph](https://github.com/colbymchenry/codegraph): powers the optional `query_repo` / `index_repo` MCP tools
